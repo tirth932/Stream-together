@@ -8,7 +8,7 @@ const ROOM_ID = document.location.pathname.replace("/", "");
 let player;
 let isEventFromAbly = false;
 let lastPlayerState = -1;
-// ✨ NEW: A flag to track if the main YouTube API script is ready.
+// A flag to track if the main YouTube API script is ready.
 let isYouTubeApiReady = false;
 let initialVideoId = null;
 
@@ -28,7 +28,7 @@ function handleSetVideo(data) {
         player.loadVideoById(data.videoId);
     } else {
         initialVideoId = data.videoId;
-        // ✨ CHANGED: If the API is ready, create the player now.
+        // If the API is ready, create the player now.
         // Otherwise, onYouTubeIframeAPIReady will handle it.
         if (isYouTubeApiReady) {
             createPlayer(initialVideoId);
@@ -59,7 +59,6 @@ firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
 function onYouTubeIframeAPIReady() {
     console.log("YouTube API Ready.");
-    // ✨ CHANGED: Set the flag to true.
     isYouTubeApiReady = true;
     // If a video ID arrived before the API was ready, create the player now.
     if (initialVideoId) {
@@ -68,7 +67,6 @@ function onYouTubeIframeAPIReady() {
 }
 
 function createPlayer(videoId) {
-    // Prevent creating a player if one already exists.
     if (player) return;
     
     player = new YT.Player('player', {
@@ -134,7 +132,7 @@ document.getElementById('set-video-btn').addEventListener('click', () => {
 });
 
 function extractVideoID(url) {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const regExp = /^.*(youtu.be\/|v\/|u\/w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
     const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
 }
