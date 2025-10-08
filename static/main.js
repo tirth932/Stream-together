@@ -1,21 +1,21 @@
 // static/main.js
 
 // --- Configuration ---
-// PASTE YOUR ABLY API KEY HERE 👇
-const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA';
+const ABLY_API_KEY = 'YOUR_API_KEY_GOES_HERE'; // Make sure your key is still here
 const ROOM_ID = document.location.pathname.replace("/", "");
 
 // --- Ably & Player State ---
 let player;
 let isEventFromAbly = false;
+// ✨ NEW: Add a variable to track the last known state of the player.
+let lastPlayerState = -1; // -1 is the "unstarted" state
+
 const ably = new Ably.Realtime(ABLY_API_KEY);
-const channel = ably.channels.get(`stream-together:${ROOM_ID}`); // Each room gets a unique channel
+const channel = ably.channels.get(`stream-together:${ROOM_ID}`);
 
 console.log("Connecting to Ably...");
 
 // --- Ably Communication ---
-
-// 1. Subscribe to (listen for) events from other users
 channel.subscribe('set-video', (message) => handleSetVideo(message.data));
 channel.subscribe('play', (message) => handlePlay(message.data));
 channel.subscribe('pause', (message) => handlePause(message.data));
@@ -70,15 +70,23 @@ function createPlayer(videoId) {
 
 function onPlayerReady(event) {
     console.log("Player is ready.");
-    event.target.playVideo();
 }
 
-// This function now sends events TO Ably
 function onPlayerStateChange(event) {
     if (isEventFromAbly) {
         isEventFromAbly = false;
         return;
     }
+
+    // ✨ NEW: Check if the state has actually changed before broadcasting.
+    // This prevents the infinite loop of "PLAYING" events.
+    if (event.data === lastPlayerState) {
+        return;
+    }
+
+    // ✨ NEW: Update the last known state.
+    lastPlayerState = event.data;
+
     switch (event.data) {
         case YT.PlayerState.PLAYING:
             console.log("User played video. Publishing to Ably.");
@@ -96,10 +104,9 @@ document.getElementById('set-video-btn').addEventListener('click', () => {
     const url = document.getElementById('youtube-url').value;
     const videoId = extractVideoID(url);
     if (videoId) {
-        // Send the new video ID to Ably to be broadcasted
-        channel.publish('set-video', { videoId: videoId });
-        // Also create the player locally right away
-        handleSetVideo({ videoId: videoId });
+        const messageData = { videoId: videoId };
+        channel.publish('set-video', messageData);
+        handleSetVideo(messageData);
     } else {
         alert("Invalid YouTube URL.");
     }
