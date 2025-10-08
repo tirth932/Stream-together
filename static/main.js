@@ -7,8 +7,9 @@ const ROOM_ID = document.location.pathname.replace("/", "");
 // --- Ably & Player State ---
 let player;
 let isEventFromAbly = false;
-// ✨ NEW: Add a variable to track the last known state of the player.
-let lastPlayerState = -1; // -1 is the "unstarted" state
+let lastPlayerState = -1;
+// ✨ NEW: A variable to hold the video ID that arrives before the player is ready.
+let initialVideoId = null;
 
 const ably = new Ably.Realtime(ABLY_API_KEY);
 const channel = ably.channels.get(`stream-together:${ROOM_ID}`);
@@ -20,14 +21,16 @@ channel.subscribe('set-video', (message) => handleSetVideo(message.data));
 channel.subscribe('play', (message) => handlePlay(message.data));
 channel.subscribe('pause', (message) => handlePause(message.data));
 
-// Handlers for incoming messages
 function handleSetVideo(data) {
     console.log("Received 'set-video' event:", data);
-    isEventFromAbly = true;
-    if (!player) {
-        createPlayer(data.videoId);
-    } else {
+    // ✨ CHANGED: Instead of acting immediately, we check if the player exists.
+    if (player && player.loadVideoById) {
+        // If player is ready, load the video now.
+        isEventFromAbly = true;
         player.loadVideoById(data.videoId);
+    } else {
+        // If player is NOT ready, store the video ID to be loaded later.
+        initialVideoId = data.videoId;
     }
 }
 
@@ -56,6 +59,10 @@ firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
 function onYouTubeIframeAPIReady() {
     console.log("YouTube API Ready.");
+    // ✨ CHANGED: If a video ID arrived early, create the player now.
+    if (initialVideoId) {
+        createPlayer(initialVideoId);
+    }
 }
 
 function createPlayer(videoId) {
@@ -67,14 +74,19 @@ function createPlayer(videoId) {
             'playsinline': 1,
             'autoplay': 1,
             'controls': 1,
-            'origin': window.location.origin // ✨ NEW: Add this line
+            'origin': window.location.origin // This line is still needed
         },
-        events: { 'onReady': onPlayerReady, 'onStateChange': onPlayerStateChange }
+        events: {
+            'onReady': onPlayerReady,
+            'onStateChange': onPlayerStateChange
+        }
     });
 }
 
 function onPlayerReady(event) {
     console.log("Player is ready.");
+    // ✨ CHANGED: The 'autoplay' var can be unreliable. This is a more forceful way to play.
+    event.target.playVideo();
 }
 
 function onPlayerStateChange(event) {
@@ -82,14 +94,9 @@ function onPlayerStateChange(event) {
         isEventFromAbly = false;
         return;
     }
-
-    // ✨ NEW: Check if the state has actually changed before broadcasting.
-    // This prevents the infinite loop of "PLAYING" events.
     if (event.data === lastPlayerState) {
         return;
     }
-
-    // ✨ NEW: Update the last known state.
     lastPlayerState = event.data;
 
     switch (event.data) {
@@ -111,7 +118,14 @@ document.getElementById('set-video-btn').addEventListener('click', () => {
     if (videoId) {
         const messageData = { videoId: videoId };
         channel.publish('set-video', messageData);
-        handleSetVideo(messageData);
+        
+        // ✨ CHANGED: We now decide whether to create a new player or load a video
+        // into the existing one.
+        if (!player) {
+            createPlayer(videoId);
+        } else {
+            player.loadVideoById(videoId);
+        }
     } else {
         alert("Invalid YouTube URL.");
     }
