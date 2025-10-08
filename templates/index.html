@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Together - Room: {{ room_id }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for 3D effect and layout */
+        body { background-color: #111827; }
+        .spline-container {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: -1; opacity: 0.5;
+        }
+        .main-content {
+            position: relative;
+            z-index: 1;
+            transform-style: preserve-3d;
+        }
+        #player-container {
+            perspective: 1000px;
+        }
+        #player {
+            transition: transform 0.3s ease-out;
+            transform: rotateX(5deg) rotateY(-10deg);
+            box-shadow: 0px 25px 50px -12px rgba(0, 0, 0, 0.75);
+        }
+        #player-container:hover #player {
+            transform: rotateX(0) rotateY(0);
+        }
+    </style>
+</head>
+<body class="text-white font-sans flex items-center justify-center min-h-screen overflow-hidden">
+
+    <div class="spline-container">
+        <iframe src='https://my.spline.design/interdimensionalmessaged-6c5b9f71c172d7f57134376c7c4f45d3/' frameborder='0' width='100%' height='100%'></iframe>
+    </div>
+
+    <main class="main-content w-full max-w-4xl p-8 space-y-6">
+        <header class="text-center">
+            <h1 class="text-4xl md:text-5xl font-bold tracking-tighter">Stream Together</h1>
+            <p class="text-lg text-gray-400">Room ID: <span class="font-mono bg-gray-700 px-2 py-1 rounded">{{ room_id }}</span></p>
+        </header>
+
+        <div id="player-container" class="aspect-video w-full bg-black rounded-xl shadow-2xl">
+            <div id="player" class="w-full h-full rounded-xl"></div>
+        </div>
+
+        <div class="flex flex-col md:flex-row gap-4">
+            <input type="text" id="youtube-url" class="flex-grow bg-gray-800 border-2 border-gray-600 focus:border-purple-500 focus:ring-purple-500 rounded-lg p-3 outline-none transition" placeholder="Paste a YouTube video URL here...">
+            <button id="set-video-btn" class="bg-purple-600 hover:bg-purple-700 transition-colors font-bold py-3 px-6 rounded-lg">Set Video</button>
+        </div>
+    </main>
+
+    <script src="/static/main.js"></script>
+</body>
+</html>
