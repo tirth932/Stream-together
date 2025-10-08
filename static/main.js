@@ -4,16 +4,16 @@
 const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // Make sure your key is still here
 const ROOM_ID = document.location.pathname.replace("/", "");
 
-// --- Ably & Player State ---
+// --- State Management ---
 let player;
 let isEventFromAbly = false;
 let lastPlayerState = -1;
-// ✨ NEW: A variable to hold the video ID that arrives before the player is ready.
+// ✨ NEW: A flag to track if the main YouTube API script is ready.
+let isYouTubeApiReady = false;
 let initialVideoId = null;
 
 const ably = new Ably.Realtime(ABLY_API_KEY);
 const channel = ably.channels.get(`stream-together:${ROOM_ID}`);
-
 console.log("Connecting to Ably...");
 
 // --- Ably Communication ---
@@ -23,32 +23,32 @@ channel.subscribe('pause', (message) => handlePause(message.data));
 
 function handleSetVideo(data) {
     console.log("Received 'set-video' event:", data);
-    // ✨ CHANGED: Instead of acting immediately, we check if the player exists.
-    if (player && player.loadVideoById) {
-        // If player is ready, load the video now.
+    if (player && typeof player.loadVideoById === 'function') {
         isEventFromAbly = true;
         player.loadVideoById(data.videoId);
     } else {
-        // If player is NOT ready, store the video ID to be loaded later.
         initialVideoId = data.videoId;
+        // ✨ CHANGED: If the API is ready, create the player now.
+        // Otherwise, onYouTubeIframeAPIReady will handle it.
+        if (isYouTubeApiReady) {
+            createPlayer(initialVideoId);
+        }
     }
 }
 
 function handlePlay(data) {
+    if (!player) return;
     console.log("Received 'play' event:", data);
     isEventFromAbly = true;
-    if (player) {
-        player.seekTo(data.currentTime, true);
-        player.playVideo();
-    }
+    player.seekTo(data.currentTime, true);
+    player.playVideo();
 }
 
 function handlePause(data) {
+    if (!player) return;
     console.log("Received 'pause' event");
     isEventFromAbly = true;
-    if (player) {
-        player.pauseVideo();
-    }
+    player.pauseVideo();
 }
 
 // --- YouTube Iframe Player API Setup ---
@@ -59,13 +59,18 @@ firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
 function onYouTubeIframeAPIReady() {
     console.log("YouTube API Ready.");
-    // ✨ CHANGED: If a video ID arrived early, create the player now.
+    // ✨ CHANGED: Set the flag to true.
+    isYouTubeApiReady = true;
+    // If a video ID arrived before the API was ready, create the player now.
     if (initialVideoId) {
         createPlayer(initialVideoId);
     }
 }
 
 function createPlayer(videoId) {
+    // Prevent creating a player if one already exists.
+    if (player) return;
+    
     player = new YT.Player('player', {
         height: '100%',
         width: '100%',
@@ -74,7 +79,7 @@ function createPlayer(videoId) {
             'playsinline': 1,
             'autoplay': 1,
             'controls': 1,
-            'origin': window.location.origin // This line is still needed
+            'origin': window.location.origin
         },
         events: {
             'onReady': onPlayerReady,
@@ -85,7 +90,6 @@ function createPlayer(videoId) {
 
 function onPlayerReady(event) {
     console.log("Player is ready.");
-    // ✨ CHANGED: The 'autoplay' var can be unreliable. This is a more forceful way to play.
     event.target.playVideo();
 }
 
@@ -119,8 +123,6 @@ document.getElementById('set-video-btn').addEventListener('click', () => {
         const messageData = { videoId: videoId };
         channel.publish('set-video', messageData);
         
-        // ✨ CHANGED: We now decide whether to create a new player or load a video
-        // into the existing one.
         if (!player) {
             createPlayer(videoId);
         } else {
