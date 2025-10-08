@@ -63,7 +63,12 @@ function createPlayer(videoId) {
         height: '100%',
         width: '100%',
         videoId: videoId,
-        playerVars: { 'playsinline': 1, 'autoplay': 1, 'controls': 1 },
+        playerVars: {
+            'playsinline': 1,
+            'autoplay': 1,
+            'controls': 1,
+            'origin': window.location.origin // ✨ NEW: Add this line
+        },
         events: { 'onReady': onPlayerReady, 'onStateChange': onPlayerStateChange }
     });
 }
