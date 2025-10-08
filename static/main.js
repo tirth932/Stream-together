@@ -1,49 +1,71 @@
 // static/main.js
-// --- Configuration ---
-const isSecure = document.location.protocol === 'https:'; // This is the missing line
-const wsProtocol = isSecure ? 'wss:' : 'ws:';
-const ROOM_ID = document.location.pathname.replace("/", "");
-const WEBSOCKET_URL = `${wsProtocol}//${document.location.host}/ws/${ROOM_ID}`;
 
-// --- State Management ---
+// --- Configuration ---
+// PASTE YOUR ABLY API KEY HERE 👇
+const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA';
+const ROOM_ID = document.location.pathname.replace("/", "");
+
+// --- Ably & Player State ---
 let player;
-let webSocket;
-// A flag to prevent echoing events. If we receive an event from the server,
-// we set this to true so we don't send the same event back.
-let isEventFromSocket = false;
+let isEventFromAbly = false;
+const ably = new Ably.Realtime(ABLY_API_KEY);
+const channel = ably.channels.get(`stream-together:${ROOM_ID}`); // Each room gets a unique channel
+
+console.log("Connecting to Ably...");
+
+// --- Ably Communication ---
+
+// 1. Subscribe to (listen for) events from other users
+channel.subscribe('set-video', (message) => handleSetVideo(message.data));
+channel.subscribe('play', (message) => handlePlay(message.data));
+channel.subscribe('pause', (message) => handlePause(message.data));
+
+// Handlers for incoming messages
+function handleSetVideo(data) {
+    console.log("Received 'set-video' event:", data);
+    isEventFromAbly = true;
+    if (!player) {
+        createPlayer(data.videoId);
+    } else {
+        player.loadVideoById(data.videoId);
+    }
+}
+
+function handlePlay(data) {
+    console.log("Received 'play' event:", data);
+    isEventFromAbly = true;
+    if (player) {
+        player.seekTo(data.currentTime, true);
+        player.playVideo();
+    }
+}
+
+function handlePause(data) {
+    console.log("Received 'pause' event");
+    isEventFromAbly = true;
+    if (player) {
+        player.pauseVideo();
+    }
+}
 
 // --- YouTube Iframe Player API Setup ---
-// This code loads the IFrame Player API code asynchronously.
 const tag = document.createElement('script');
 tag.src = "https://www.youtube.com/iframe_api";
 const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-// This function creates an <iframe> (and YouTube player) after the API code downloads.
 function onYouTubeIframeAPIReady() {
     console.log("YouTube API Ready.");
-    // We don't create the player here yet. We wait for a video ID.
 }
 
 function createPlayer(videoId) {
-    if (player) {
-        player.loadVideoById(videoId);
-    } else {
-        player = new YT.Player('player', {
-            height: '100%',
-            width: '100%',
-            videoId: videoId,
-            playerVars: {
-                'playsinline': 1,
-                'autoplay': 1,
-                'controls': 1 // Show native controls
-            },
-            events: {
-                'onReady': onPlayerReady,
-                'onStateChange': onPlayerStateChange
-            }
-        });
-    }
+    player = new YT.Player('player', {
+        height: '100%',
+        width: '100%',
+        videoId: videoId,
+        playerVars: { 'playsinline': 1, 'autoplay': 1, 'controls': 1 },
+        events: { 'onReady': onPlayerReady, 'onStateChange': onPlayerStateChange }
+    });
 }
 
 function onPlayerReady(event) {
@@ -51,79 +73,21 @@ function onPlayerReady(event) {
     event.target.playVideo();
 }
 
+// This function now sends events TO Ably
 function onPlayerStateChange(event) {
-    // If the event was triggered by our code (from a socket message), do nothing.
-    if (isEventFromSocket) {
-        isEventFromSocket = false;
+    if (isEventFromAbly) {
+        isEventFromAbly = false;
         return;
     }
-
-    // Otherwise, the user initiated the action, so broadcast it.
     switch (event.data) {
         case YT.PlayerState.PLAYING:
-            console.log("User played video. Broadcasting.");
-            sendMessage({
-                type: "PLAY",
-                currentTime: player.getCurrentTime()
-            });
+            console.log("User played video. Publishing to Ably.");
+            channel.publish('play', { currentTime: player.getCurrentTime() });
             break;
         case YT.PlayerState.PAUSED:
-            console.log("User paused video. Broadcasting.");
-            sendMessage({ type: "PAUSE" });
+            console.log("User paused video. Publishing to Ably.");
+            channel.publish('pause', {});
             break;
-    }
-}
-
-// --- WebSocket Communication ---
-function connectWebSocket() {
-    webSocket = new WebSocket(WEBSOCKET_URL);
-
-    webSocket.onopen = (event) => {
-        console.log("Successfully connected to WebSocket server.");
-    };
-
-    webSocket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        console.log("Received message:", data);
-        
-        isEventFromSocket = true; // Set flag to prevent echo
-        
-        switch (data.type) {
-            case "SET_VIDEO":
-                if (!player) {
-                    createPlayer(data.videoId);
-                } else {
-                    player.loadVideoById(data.videoId);
-                }
-                break;
-            case "PLAY":
-                if (player) {
-                    player.seekTo(data.currentTime, true);
-                    player.playVideo();
-                }
-                break;
-            case "PAUSE":
-                if (player) {
-                    player.pauseVideo();
-                }
-                break;
-        }
-    };
-
-    webSocket.onclose = (event) => {
-        console.log("WebSocket disconnected. Attempting to reconnect...");
-        setTimeout(connectWebSocket, 3000); // Reconnect after 3 seconds
-    };
-    
-    webSocket.onerror = (error) => {
-        console.error("WebSocket Error:", error);
-        webSocket.close();
-    };
-}
-
-function sendMessage(message) {
-    if (webSocket.readyState === WebSocket.OPEN) {
-        webSocket.send(JSON.stringify(message));
     }
 }
 
@@ -132,16 +96,12 @@ document.getElementById('set-video-btn').addEventListener('click', () => {
     const url = document.getElementById('youtube-url').value;
     const videoId = extractVideoID(url);
     if (videoId) {
-        // Send the new video ID to the server to be broadcasted
-        sendMessage({ type: 'SET_VIDEO', videoId: videoId });
+        // Send the new video ID to Ably to be broadcasted
+        channel.publish('set-video', { videoId: videoId });
         // Also create the player locally right away
-        if (!player) {
-            createPlayer(videoId);
-        } else {
-            player.loadVideoById(videoId);
-        }
+        handleSetVideo({ videoId: videoId });
     } else {
-        alert("Invalid YouTube URL. Please use a full video URL.");
+        alert("Invalid YouTube URL.");
     }
 });
 
@@ -150,6 +110,3 @@ function extractVideoID(url) {
     const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
 }
-
-// --- Initialize ---
-connectWebSocket();
