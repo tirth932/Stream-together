@@ -1,7 +1,7 @@
 // static/main.js
 
 // --- Configuration ---
-const ABLY_API_KEY = 'YOUR_API_KEY_GOES_HERE'; // Make sure your key is still here
+const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // Make sure your key is still here
 const ROOM_ID = document.location.pathname.replace("/", "");
 
 // --- Ably & Player State ---
