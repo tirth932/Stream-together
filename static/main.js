@@ -1,3 +1,5 @@
+// static/main.js
+
 // --- Configuration ---
 const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA';
 const ROOM_ID = document.location.pathname.replace("/", "");
@@ -10,6 +12,7 @@ let isYouTubeApiReady = false;
 let initialVideoId = null;
 let currentVideoId = null;
 let currentTime = 0;
+let pendingSync = null; // store sync for late joiners
 
 // --- Connect to Ably ---
 const ably = new Ably.Realtime({ key: ABLY_API_KEY });
@@ -39,7 +42,9 @@ function handleSetVideo(data) {
     if (player) {
         isEventFromAbly = true;
         player.loadVideoById(currentVideoId);
-        if (currentTime > 0) player.seekTo(currentTime, true);
+        setTimeout(() => {
+            player.seekTo(currentTime, true);
+        }, 500);
     } else {
         initialVideoId = currentVideoId;
         if (isYouTubeApiReady) createPlayer(initialVideoId);
@@ -77,19 +82,26 @@ function handleSyncRequest() {
 }
 
 function handleSyncResponse(data) {
-    if (!player) {
-        createPlayer(data.videoId);
-    } else {
-        isEventFromAbly = true;
-        player.loadVideoById(data.videoId);
-        player.seekTo(data.currentTime, true);
-
-        if (data.state === YT.PlayerState.PLAYING) player.playVideo();
-        else player.pauseVideo();
-    }
+    pendingSync = data;
+    if (player) applyPendingSync();
+    else if (isYouTubeApiReady) createPlayer(data.videoId);
 }
 
-// --- YouTube API ---
+function applyPendingSync() {
+    if (!pendingSync || !player) return;
+
+    isEventFromAbly = true;
+    player.loadVideoById(pendingSync.videoId);
+
+    setTimeout(() => {
+        player.seekTo(pendingSync.currentTime || 0, true);
+        if (pendingSync.state === YT.PlayerState.PLAYING) player.playVideo();
+        else player.pauseVideo();
+        pendingSync = null;
+    }, 500);
+}
+
+// --- YouTube IFrame API ---
 const tag = document.createElement('script');
 tag.src = "https://www.youtube.com/iframe_api";
 document.getElementsByTagName('script')[0].parentNode.insertBefore(tag, null);
@@ -114,7 +126,8 @@ function createPlayer(videoId) {
 
 function onPlayerReady(event) {
     console.log("Player ready");
-    if (currentTime > 0) event.target.seekTo(currentTime, true);
+    if (pendingSync) applyPendingSync();
+    else if (currentTime > 0) event.target.seekTo(currentTime, true);
     event.target.playVideo();
 }
 
