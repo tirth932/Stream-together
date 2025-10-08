@@ -1,5 +1,6 @@
 // static/main.js
 // --- Configuration ---
+const isSecure = document.location.protocol === 'https:'; // This is the missing line
 const wsProtocol = isSecure ? 'wss:' : 'ws:';
 const ROOM_ID = document.location.pathname.replace("/", "");
 const WEBSOCKET_URL = `${wsProtocol}//${document.location.host}/ws/${ROOM_ID}`;
