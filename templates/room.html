@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
-    <title>Stream Together - Room: {{ room_id }}</title>
+    <title>Stream Together {% if is_admin %}- Admin Control{% endif %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -55,18 +55,19 @@
                 {% endif %}
             </div>
 
-            <div id="add-to-queue-controls" class="flex flex-col md:flex-row gap-4 items-center">
-                <div class="relative flex-grow w-full"><input type="text" id="youtube-url" class="input-field w-full bg-gray-800/70 border-2 border-gray-600 focus:border-purple-500 rounded-lg py-3 pr-3 pl-4 outline-none" placeholder="Paste a YouTube URL to add to the queue..."></div>
-                <button id="add-to-queue-btn" class="action-button w-full md:w-auto bg-green-600 hover:bg-green-700 font-bold py-3 px-8 rounded-lg transition-all">Add to Queue</button>
+            <div class="flex flex-col md:flex-row gap-4 items-center">
+                <div class="relative flex-grow w-full"><input type="text" id="youtube-url" class="input-field w-full bg-gray-800/70 border-2 border-gray-600 focus:border-purple-500 rounded-lg py-3 pr-3 pl-4 outline-none" placeholder="Paste a YouTube URL..."></div>
+                <button id="add-to-queue-btn" class="action-button w-full sm:w-auto bg-green-600 hover:bg-green-700 font-bold py-3 px-6 rounded-lg transition-all">Add to Queue</button>
                 {% if is_admin %}
-                <button id="end-room-btn" class="action-button w-full md:w-auto bg-red-800 hover:bg-red-700 font-bold py-3 px-8 rounded-lg transition-all">End Room</button>
+                <button id="play-immediately-btn" class="action-button w-full sm:w-auto bg-purple-600 hover:bg-purple-700 font-bold py-3 px-6 rounded-lg transition-all">Play Now</button>
+                <button id="end-room-btn" class="action-button w-full sm:w-auto bg-red-800 hover:bg-red-700 font-bold py-3 px-6 rounded-lg transition-all">End Room</button>
                 {% endif %}
             </div>
         </div>
         
         <div class="lg:col-span-1 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-4 sm:p-6 flex flex-col max-h-[90vh]">
             <div id="participant-panel"><h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Participants (<span id="participant-count">0</span>)</h3><div id="user-list" class="space-y-2 mb-2 max-h-24 overflow-y-auto"></div></div>
-            <div id="now-playing-panel"><h3 class="text-xl font-bold text-green-400 border-b-2 border-gray-700 pb-2 mb-3">Now Playing</h3><div id="now-playing-card" class="mb-4"><p class="text-gray-400 text-sm italic">Nothing is currently playing.</p></div></div>
+            <div id="now-playing-panel"><h3 class="text-xl font-bold text-green-400 border-b-2 border-gray-700 pb-2 mb-3">Now Playing</h3><div id="now-playing-card" class="mb-4"></div></div>
             <div id="queue-panel"><h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Up Next</h3><div id="queue-list" class="space-y-2 mb-4 max-h-32 overflow-y-auto"></div></div>
             <h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Live Chat</h3>
             <div id="chat-messages" class="flex-grow space-y-3 overflow-y-auto pr-2 mb-4"></div>
@@ -79,6 +80,5 @@
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/color-thief/2.3.0/color-thief.umd.js"></script>
     <script src="/static/main.js"></script>
-
 </body>
 </html>

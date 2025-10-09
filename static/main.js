@@ -1,6 +1,6 @@
 const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 const ROOM_ID = document.location.pathname.split('/').pop();
-const IS_ADMIN_FLAG = document.querySelector('p:not(.text-blue-400) > .text-purple-400') !== null;
+const IS_ADMIN_FLAG = document.title.includes('Admin Control');
 
 // --- DOM Elements ---
 const urlInput = document.getElementById('youtube-url');
@@ -25,6 +25,7 @@ const volumeOffIcon = document.getElementById('volume-off-icon');
 const leaveRoomBtn = document.getElementById('leave-room-btn');
 const changeNameBtn = document.getElementById('change-name-btn');
 const endRoomBtn = document.getElementById('end-room-btn');
+const playImmediatelyBtn = document.getElementById('play-immediately-btn');
 
 // --- State ---
 let player;
@@ -33,7 +34,7 @@ let isYouTubeApiReady = false;
 let currentVideoId = null;
 let lastPlayerState = -1;
 let NICKNAME;
-let CLIENT_ID; // --- NEW: Stable Client ID ---
+let CLIENT_ID;
 let lastVolume = 100;
 let videoQueue = [];
 let nowPlayingItem = null;
@@ -44,63 +45,50 @@ let isResyncing = false;
 function getIdentity() {
     if (IS_ADMIN_FLAG) {
         NICKNAME = 'Admin';
-        CLIENT_ID = 'admin-client'; // Stable ID for admin
+        CLIENT_ID = 'admin-client';
         return;
     }
     let name = '';
     while (!name || name.trim().length === 0) { name = prompt("Please enter your name to join the room:", ""); if (name === null) { name = `Guest-${Math.random().toString(36).substring(2, 6)}`; break; } }
     NICKNAME = name.trim();
-    // Create a unique, random ID for viewers
     CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
 }
 
 // --- Ably Connection & Main Logic ---
 let ably, channel;
 async function main() {
-    getIdentity(); // Get both CLIENT_ID and NICKNAME
-    
+    getIdentity();
     ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: CLIENT_ID });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
 
-    // Restore state from history BEFORE subscribing
     try {
         await channel.attach();
         const history = await channel.history({ limit: 10, direction: 'backwards' });
-        
         const lastNowPlayingMsg = history.items.find(msg => msg.name === 'now-playing-updated');
         const lastQueueMsg = history.items.find(msg => msg.name === 'queue-updated');
-
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
         if (lastNowPlayingMsg) {
             handleNowPlayingUpdated(lastNowPlayingMsg.data);
-            // --- FIX: If state is restored, load the video into the player ---
             if (nowPlayingItem && isYouTubeApiReady) {
                 createPlayer(nowPlayingItem.videoId);
             } else if (nowPlayingItem) {
-                // Wait for API to be ready, then create player
                 window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(nowPlayingItem.videoId); };
             }
         }
-        
-        console.log("✅ Room state restored from history.");
-
     } catch (err) { console.error("Could not retrieve channel history:", err); }
 
-    // Continue with normal setup
     await channel.presence.enter({ nickname: NICKNAME });
     channel.subscribe(handleAblyMessages);
     channel.presence.subscribe(['enter', 'leave', 'update'], updateParticipantList);
     updateParticipantList();
-    
-    // --- FIX: Viewer always requests sync on join/refresh ---
     if (!IS_ADMIN_FLAG) {
-        if (waitingOverlay) waitingOverlay.style.display = 'flex'; // Ensure overlay is visible
+        if (waitingOverlay) waitingOverlay.style.display = 'flex';
         channel.publish('request-join', { nickname: NICKNAME });
     }
     window.addEventListener('beforeunload', () => { if (channel) channel.presence.leave(); });
 }
 
-// --- Ably Message Handler (rest of the file is mostly the same, with small fixes) ---
+// --- Ably Message Handler ---
 function handleAblyMessages(message) {
     switch (message.name) {
         case 'set-video': handleSetVideo(message.data); break;
@@ -116,6 +104,7 @@ function handleAblyMessages(message) {
         case 'queue-updated': handleQueueUpdated(message.data); break;
         case 'now-playing-updated': handleNowPlayingUpdated(message.data); break;
         case 'room-ended': handleRoomEnded(message.data); break;
+        case 'promote-to-admin': handlePromotion(message.data); break;
     }
 }
 
@@ -138,20 +127,18 @@ function updateBackgroundColor(imageUrl) {
 }
 
 // --- Queue & Now Playing Logic ---
-async function addVideoToQueue() {
+async function getVideoItemFromUrl() {
     const videoId = extractVideoID(urlInput.value);
-    if (!videoId) { alert("Invalid YouTube URL."); return; }
+    if (!videoId) { alert("Invalid YouTube URL."); return null; }
     try {
-        addToQueueBtn.disabled = true; addToQueueBtn.textContent = "Adding...";
         const response = await fetch(`/api/video-details?id=${videoId}`);
         if (!response.ok) throw new Error("Could not fetch video details.");
         const details = await response.json();
-        const queueItem = { videoId: videoId, title: details.title, thumbnail: details.thumbnail, addedBy: NICKNAME };
-        channel.publish('add-to-queue', queueItem);
         urlInput.value = '';
-    } catch (error) { console.error("Error adding video to queue:", error); alert(error.message);
-    } finally { addToQueueBtn.disabled = false; addToQueueBtn.textContent = "Add to Queue"; }
+        return { videoId: videoId, title: details.title, thumbnail: details.thumbnail, addedBy: NICKNAME };
+    } catch (error) { console.error("Error getting video details:", error); alert(error.message); return null; }
 }
+
 function handleAddToQueue(newItem) {
     if (!IS_ADMIN_FLAG) return;
     videoQueue.push(newItem);
@@ -171,29 +158,37 @@ function renderQueue() {
     if (!queueListContainer) return;
     queueListContainer.innerHTML = '';
     if (videoQueue.length === 0) { queueListContainer.innerHTML = `<p class="text-gray-400 text-sm italic">The queue is empty.</p>`; return; }
-    videoQueue.forEach((item, index) => {
+    videoQueue.forEach((item) => {
         const queueEl = document.createElement('div');
         queueEl.className = 'flex items-center gap-3 bg-gray-800/50 p-2 rounded-md';
-        queueEl.innerHTML = `<span class="font-bold text-gray-400">${index + 1}</span><img src="${item.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm min-w-0"><p class="font-semibold text-gray-200 truncate">${item.title}</p><p class="text-gray-400">Added by: ${item.addedBy}</p></div>`;
+        const removeButtonHTML = IS_ADMIN_FLAG ? `<button title="Remove from queue" data-video-id="${item.videoId}" class="remove-queue-btn ml-auto p-1 text-red-400 hover:text-red-200">❌</button>` : '';
+        queueEl.innerHTML = `<img src="${item.thumbnail}" class="w-16 h-10 object-cover rounded"><div class="flex-1 text-sm min-w-0"><p class="font-semibold text-gray-200 truncate">${item.title}</p><p class="text-gray-400">Added by: ${item.addedBy}</p></div>${removeButtonHTML}`;
         queueListContainer.appendChild(queueEl);
     });
 }
 function renderNowPlaying() {
     if (!nowPlayingCard) return;
-    if (!nowPlayingItem) {
-        nowPlayingCard.innerHTML = `<p class="text-gray-400 text-sm italic">Nothing is currently playing.</p>`;
-        return;
-    }
+    if (!nowPlayingItem) { nowPlayingCard.innerHTML = `<p class="text-gray-400 text-sm italic">Nothing is currently playing.</p>`; return; }
     nowPlayingCard.innerHTML = `<div class="flex items-center gap-3 bg-green-900/30 p-2 rounded-md border border-green-500"><img src="${nowPlayingItem.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm min-w-0"><p class="font-semibold text-gray-100 truncate">${nowPlayingItem.title}</p><p class="text-green-300">Added by: ${nowPlayingItem.addedBy}</p></div></div>`;
 }
+
+function playItemNow(item) {
+    if (!IS_ADMIN_FLAG || !item) return;
+    channel.publish('chat-message', { nickname: 'System', text: `Now playing "${item.title}" (added by ${item.addedBy})`, isSystem: true });
+    channel.publish('now-playing-updated', { item: item });
+    channel.publish('set-video', { videoId: item.videoId });
+}
+
 function playNextInQueue() {
     if (!IS_ADMIN_FLAG) return;
-    if (videoQueue.length === 0) { channel.publish('now-playing-updated', { item: null }); console.log("Queue finished."); return; }
-    const nextItem = videoQueue.shift();
-    channel.publish('chat-message', { nickname: 'System', text: `Now playing "${nextItem.title}" (added by ${nextItem.addedBy})`, isSystem: true });
-    channel.publish('now-playing-updated', { item: nextItem });
-    channel.publish('set-video', { videoId: nextItem.videoId });
-    channel.publish('queue-updated', { queue: videoQueue });
+    if (videoQueue.length > 0) {
+        const nextItem = videoQueue.shift();
+        playItemNow(nextItem);
+        channel.publish('queue-updated', { queue: videoQueue });
+    } else {
+        channel.publish('now-playing-updated', { item: null });
+        console.log("Queue finished.");
+    }
 }
 
 // --- Chat Logic ---
@@ -217,19 +212,28 @@ async function updateParticipantList() {
     participantCount.textContent = members.length;
     userListContainer.innerHTML = '';
     members.forEach(member => {
-        // --- FIX: Reliably get the display name from presence data ---
         const displayName = member.data ? member.data.nickname : member.clientId;
         const isAdmin = member.clientId === 'admin-client';
-        const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" class="kick-btn bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1 px-2 rounded">Kick</button>` : '';
+        const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" title="Kick User" class="kick-btn p-1 text-red-400 hover:text-red-200">🚫</button>` : '';
+        const promoteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-promote-id="${member.clientId}" title="Make Admin" class="promote-btn p-1 text-yellow-400 hover:text-yellow-200">👑</button>` : '';
         const adminTagHTML = isAdmin ? `<span class="text-xs font-bold text-purple-400">[Admin]</span>` : '';
         const userEl = document.createElement('div');
         userEl.className = 'flex justify-between items-center bg-gray-800 p-2 rounded';
-        userEl.innerHTML = `<div class="flex items-center gap-2"><span class="text-gray-300">${displayName}</span>${adminTagHTML}</div>${kickButtonHTML}`;
+        userEl.innerHTML = `<div class="flex items-center gap-2"><span class="text-gray-300">${displayName}</span>${adminTagHTML}</div><div class="flex items-center gap-2">${promoteButtonHTML}${kickButtonHTML}</div>`;
         userListContainer.appendChild(userEl);
     });
 }
 function handleJoinRequest(data) { channel.publish('approve-join', { approvedNickname: data.nickname }); }
 function kickUser(clientId) { if (!IS_ADMIN_FLAG) return; channel.publish('kick-user', { kickedClientId: clientId }); }
+
+function handlePromotion(data) {
+    alert("Admin role is being transferred. The room will now reload.");
+    if (data.newAdminClientId === CLIENT_ID) {
+        window.location.href = `/admin/${ROOM_ID}`;
+    } else {
+        window.location.href = `/join/${ROOM_ID}`;
+    }
+}
 
 // --- Sync & User Logic ---
 function handleSyncRequest(data) {
@@ -238,10 +242,11 @@ function handleSyncRequest(data) {
     channel.publish('sync-response', syncData);
 }
 function handleSync(data) {
-    if(data.nowPlaying) handleNowPlayingUpdated({ item: data.nowPlaying });
-    if(data.queue) handleQueueUpdated({ queue: data.queue });
+    if (data.nowPlaying) handleNowPlayingUpdated({ item: data.nowPlaying });
+    if (data.queue) handleQueueUpdated({ queue: data.queue });
     const applyVideoSync = () => {
-        isEventFromAbly = true; if(data.videoId) {
+        isEventFromAbly = true;
+        if (data.videoId) {
             isResyncing = true;
             if (player.getVideoData().video_id === data.videoId) {
                 player.seekTo(data.currentTime, true);
@@ -260,12 +265,8 @@ function handleApproval() {
     channel.publish('sync-request', { requesterClientId: CLIENT_ID });
     displayChatMessage('System', 'You have been admitted to the room.', true);
 }
-function handleKick() {
-    alert("You have been removed from the room by the admin."); ably.close(); window.location.href = '/';
-}
-function handleRoomEnded(data) {
-    alert(data.message); ably.close(); window.location.href = '/';
-}
+function handleKick() { alert("You have been removed from the room by the admin."); ably.close(); window.location.href = '/'; }
+function handleRoomEnded(data) { alert(data.message); ably.close(); window.location.href = '/'; }
 
 // --- Real-time Video Control Handlers ---
 function handleSetVideo(data) {
@@ -283,14 +284,17 @@ const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 function onYouTubeIframeAPIReady() { isYouTubeApiReady = true; }
 function createPlayer(videoId, onReadyCallback) {
-    if (player) { if (onReadyCallback) onReadyCallback(); return; }
+    if (player) {
+        // If player exists, just load the new video.
+        player.loadVideoById(videoId);
+        if (onReadyCallback) onReadyCallback();
+        return;
+    }
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
         playerVars: { playsinline: 1, autoplay: 1, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin },
-        events: { 'onReady': (event) => { 
-            // --- FIX: If admin refreshes, resync the room from t=0 ---
+        events: { 'onReady': (event) => {
             if (IS_ADMIN_FLAG && nowPlayingItem) {
-                displayChatMessage('System', 'Admin has reconnected, re-syncing room...', true);
                 channel.publish('play', { currentTime: 0 });
             }
             if (onReadyCallback) onReadyCallback(event);
@@ -324,12 +328,45 @@ function extractVideoID(url) {
 }
 
 // --- Event Listeners ---
-addToQueueBtn.addEventListener('click', addVideoToQueue);
+addToQueueBtn.addEventListener('click', async () => {
+    addToQueueBtn.disabled = true;
+    const newItem = await getVideoItemFromUrl();
+    if (newItem) { channel.publish('add-to-queue', newItem); }
+    addToQueueBtn.disabled = false;
+});
+
 if (IS_ADMIN_FLAG) {
     userListContainer.addEventListener('click', (e) => {
         const kickBtn = e.target.closest('.kick-btn');
-        if (kickBtn) { const clientIdToKick = kickBtn.dataset.kickId; if (clientIdToKick) kickUser(clientIdToKick); }
+        const promoteBtn = e.target.closest('.promote-btn');
+        if (kickBtn) { 
+            const clientIdToKick = kickBtn.dataset.kickId; 
+            if (clientIdToKick && confirm("Are you sure you want to kick this user?")) kickUser(clientIdToKick); 
+        }
+        if (promoteBtn) {
+            const clientIdToPromote = promoteBtn.dataset.promoteId;
+            if (clientIdToPromote && confirm("Are you sure you want to make this user the new admin? You will become a viewer.")) {
+                channel.publish('promote-to-admin', { newAdminClientId: clientIdToPromote });
+            }
+        }
     });
+    
+    queueListContainer.addEventListener('click', (e) => {
+        const removeBtn = e.target.closest('.remove-queue-btn');
+        if (removeBtn) {
+            const videoIdToRemove = removeBtn.dataset.videoId;
+            videoQueue = videoQueue.filter(item => item.videoId !== videoIdToRemove);
+            channel.publish('queue-updated', { queue: videoQueue });
+        }
+    });
+
+    playImmediatelyBtn.addEventListener('click', async () => {
+        playImmediatelyBtn.disabled = true;
+        const newItem = await getVideoItemFromUrl();
+        if (newItem) { playItemNow(newItem); }
+        playImmediatelyBtn.disabled = false;
+    });
+
     endRoomBtn.addEventListener('click', () => {
         if (confirm("Are you sure you want to end the session for everyone?")) {
             channel.publish('room-ended', { message: 'The admin has ended the session.' });
