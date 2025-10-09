@@ -54,31 +54,21 @@ async function main() {
     ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: NICKNAME });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
 
-    // --- NEW: Restore state from history BEFORE subscribing ---
     try {
-        await channel.attach(); // Ensure channel is attached
+        await channel.attach();
         const history = await channel.history({ limit: 10, direction: 'backwards' });
-        
         const lastNowPlayingMsg = history.items.find(msg => msg.name === 'now-playing-updated');
         const lastQueueMsg = history.items.find(msg => msg.name === 'queue-updated');
-
         if (lastNowPlayingMsg) handleNowPlayingUpdated(lastNowPlayingMsg.data);
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
-        
         console.log("✅ Room state restored from history.");
+    } catch (err) { console.error("Could not retrieve channel history:", err); }
 
-    } catch (err) {
-        console.error("Could not retrieve channel history:", err);
-    }
-
-    // --- Continue with normal setup ---
     await channel.presence.enter({ nickname: NICKNAME });
     channel.subscribe(handleAblyMessages);
     channel.presence.subscribe(['enter', 'leave', 'update'], updateParticipantList);
     updateParticipantList();
-    if (!IS_ADMIN_FLAG && !nowPlayingItem) { // Only request join if state wasn't restored
-        channel.publish('request-join', { nickname: NICKNAME });
-    }
+    if (!IS_ADMIN_FLAG && !nowPlayingItem) { channel.publish('request-join', { nickname: NICKNAME }); }
     window.addEventListener('beforeunload', () => { if (channel) channel.presence.leave(); });
 }
 
@@ -156,7 +146,8 @@ function renderQueue() {
     videoQueue.forEach((item, index) => {
         const queueEl = document.createElement('div');
         queueEl.className = 'flex items-center gap-3 bg-gray-800/50 p-2 rounded-md';
-        queueEl.innerHTML = `<span class="font-bold text-gray-400">${index + 1}</span><img src="${item.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm"><p class="font-semibold text-gray-200 truncate">${item.title}</p><p class="text-gray-400">Added by: ${item.addedBy}</p></div>`;
+        // --- FIX: Added 'min-w-0' to the div containing the text ---
+        queueEl.innerHTML = `<span class="font-bold text-gray-400">${index + 1}</span><img src="${item.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm min-w-0"><p class="font-semibold text-gray-200 truncate">${item.title}</p><p class="text-gray-400">Added by: ${item.addedBy}</p></div>`;
         queueListContainer.appendChild(queueEl);
     });
 }
@@ -166,7 +157,8 @@ function renderNowPlaying() {
         nowPlayingCard.innerHTML = `<p class="text-gray-400 text-sm italic">Nothing is currently playing.</p>`;
         return;
     }
-    nowPlayingCard.innerHTML = `<div class="flex items-center gap-3 bg-green-900/30 p-2 rounded-md border border-green-500"><img src="${nowPlayingItem.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm"><p class="font-semibold text-gray-100 truncate">${nowPlayingItem.title}</p><p class="text-green-300">Added by: ${nowPlayingItem.addedBy}</p></div></div>`;
+    // --- FIX: Added 'min-w-0' to the div containing the text ---
+    nowPlayingCard.innerHTML = `<div class="flex items-center gap-3 bg-green-900/30 p-2 rounded-md border border-green-500"><img src="${nowPlayingItem.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm min-w-0"><p class="font-semibold text-gray-100 truncate">${nowPlayingItem.title}</p><p class="text-green-300">Added by: ${nowPlayingItem.addedBy}</p></div></div>`;
 }
 function playNextInQueue() {
     if (!IS_ADMIN_FLAG) return;
