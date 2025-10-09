@@ -42,23 +42,6 @@ const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 
 let isResyncing = false;
 
 // --- Helper Functions ---
-// --- NEW: Validation function for names ---
-function isNameValid(name) {
-    if (!name || name.trim().length === 0) {
-        alert("Name cannot be empty.");
-        return false;
-    }
-    if (name.length < 2 || name.length > 20) {
-        alert("Name must be between 2 and 20 characters.");
-        return false;
-    }
-    if (name.trim().toLowerCase() === 'admin') {
-        alert("That name is reserved.");
-        return false;
-    }
-    return true;
-}
-
 function getIdentity() {
     if (IS_ADMIN_FLAG) {
         NICKNAME = 'Admin';
@@ -66,16 +49,7 @@ function getIdentity() {
         return;
     }
     let name = '';
-    let isValid = false;
-    while (!isValid) {
-        name = prompt("Please enter your name to join the room:", "");
-        if (name === null) { // User clicked cancel
-            name = `Guest-${Math.random().toString(36).substring(2, 6)}`;
-            isValid = true;
-        } else if (isNameValid(name)) {
-            isValid = true;
-        }
-    }
+    while (!name || name.trim().length === 0) { name = prompt("Please enter your name to join the room:", ""); if (name === null) { name = `Guest-${Math.random().toString(36).substring(2, 6)}`; break; } }
     NICKNAME = name.trim();
     CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
 }
@@ -164,10 +138,11 @@ async function getVideoItemFromUrl() {
         return { videoId: videoId, title: details.title, thumbnail: details.thumbnail, addedBy: NICKNAME };
     } catch (error) { console.error("Error getting video details:", error); alert(error.message); return null; }
 }
+
 function handleAddToQueue(newItem) {
     if (!IS_ADMIN_FLAG) return;
     videoQueue.push(newItem);
-    if (!nowPlayingItem && (!player || player.getPlayerState() === YT.PlayerState.ENDED || player.getPlayerState() === -1)) {
+    if (!nowPlayingItem && (!player || player.getPlayerState() === YT.PlayerState.ENDED || player.getPlayerState() === -1 || player.getPlayerState() === 5)) { // 5 = UNSTARTED
         playNextInQueue();
     } else {
         channel.publish('queue-updated', { queue: videoQueue });
@@ -217,26 +192,15 @@ function playNextInQueue() {
 }
 
 // --- Chat Logic ---
-// --- MODIFIED: Added validation and rate limiting ---
 function sendChatMessage() {
     const text = chatInput.value.trim();
     if (text === '') return;
-
-    if (text.length > 280) {
-        alert("Your message is too long (max 280 characters).");
-        return;
-    }
-
+    if (text.length > 280) { alert("Your message is too long (max 280 characters)."); return; }
     channel.publish('chat-message', { nickname: NICKNAME, text: text });
     chatInput.value = '';
-
-    // Cooldown to prevent spam
     sendChatBtn.disabled = true;
-    setTimeout(() => {
-        sendChatBtn.disabled = false;
-    }, 2000); // 2-second cooldown
+    setTimeout(() => { sendChatBtn.disabled = false; }, 2000);
 }
-
 function displayChatMessage(nickname, text, isSystem = false) {
     const isAdminMessage = nickname.toLowerCase() === 'admin';
     const messageEl = document.createElement('div');
@@ -266,14 +230,10 @@ async function updateParticipantList() {
 }
 function handleJoinRequest(data) { channel.publish('approve-join', { approvedClientId: data.clientId, approvedNickname: data.nickname }); }
 function kickUser(clientId) { if (!IS_ADMIN_FLAG) return; channel.publish('kick-user', { kickedClientId: clientId }); }
-
 function handlePromotion(data) {
     alert("Admin role is being transferred. The room will now reload.");
-    if (data.newAdminClientId === CLIENT_ID) {
-        window.location.href = `/admin/${ROOM_ID}`;
-    } else {
-        window.location.href = `/join/${ROOM_ID}`;
-    }
+    if (data.newAdminClientId === CLIENT_ID) { window.location.href = `/admin/${ROOM_ID}`;
+    } else { window.location.href = `/join/${ROOM_ID}`; }
 }
 
 // --- Sync & User Logic ---
@@ -289,11 +249,8 @@ function handleSync(data) {
         isEventFromAbly = true;
         if (data.videoId) {
             isResyncing = true;
-            if (player.getVideoData().video_id === data.videoId) {
-                player.seekTo(data.currentTime, true);
-            } else {
-                player.loadVideoById(data.videoId, data.currentTime);
-            }
+            if (player.getVideoData().video_id === data.videoId) { player.seekTo(data.currentTime, true);
+            } else { player.loadVideoById(data.videoId, data.currentTime); }
             if (data.state === YT.PlayerState.PLAYING) player.playVideo(); else player.pauseVideo();
         }
     };
@@ -301,7 +258,6 @@ function handleSync(data) {
     } else if (!player) { createPlayer(data.videoId, applyVideoSync);
     } else { applyVideoSync(); }
 }
-
 function requestToJoinWithRetry() {
     console.log("Requesting to join...");
     channel.publish('request-join', { nickname: NICKNAME, clientId: CLIENT_ID });
@@ -312,7 +268,6 @@ function requestToJoinWithRetry() {
         }
     }, 5000);
 }
-
 function handleApproval() {
     if (waitingOverlay) waitingOverlay.style.display = 'none';
     channel.publish('sync-request', { requesterClientId: CLIENT_ID });
@@ -336,19 +291,31 @@ tag.src = "https://www.youtube.com/iframe_api";
 const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 function onYouTubeIframeAPIReady() { isYouTubeApiReady = true; }
+
 function createPlayer(videoId, onReadyCallback) {
     if (player) { if (player.getVideoData().video_id !== videoId) player.loadVideoById(videoId); if (onReadyCallback) onReadyCallback(); return; }
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
-        playerVars: { playsinline: 1, autoplay: 1, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin },
-        events: { 'onReady': (event) => { 
-            if (IS_ADMIN_FLAG && nowPlayingItem) {
-                channel.publish('play', { currentTime: 0 });
-            }
-            if (onReadyCallback) onReadyCallback(event);
-        }, 'onStateChange': onPlayerStateChange }
+        playerVars: { 
+            playsinline: 1, 
+            autoplay: 0, // --- FIX: Disabled autoplay
+            controls: IS_ADMIN_FLAG ? 1 : 0, 
+            origin: window.location.origin 
+        },
+        events: { 
+            'onReady': (event) => { 
+                // --- FIX: Admin explicitly plays on refresh and syncs room ---
+                if (IS_ADMIN_FLAG && nowPlayingItem) {
+                    event.target.playVideo(); 
+                    channel.publish('play', { currentTime: 0 });
+                }
+                if (onReadyCallback) onReadyCallback(event);
+            }, 
+            'onStateChange': onPlayerStateChange 
+        }
     });
 }
+
 function onPlayerStateChange(event) {
     if (isEventFromAbly) { isEventFromAbly = false; return; }
     if (isResyncing && event.data === YT.PlayerState.PLAYING) { isResyncing = false; return; }
@@ -425,11 +392,11 @@ if (IS_ADMIN_FLAG) {
     leaveRoomBtn.addEventListener('click', () => { ably.close(); window.location.href = '/'; });
     changeNameBtn.addEventListener('click', async () => {
         const newName = prompt("Enter your new name:", NICKNAME);
-        if (isNameValid(newName)) { // --- MODIFIED: Use validation ---
+        if (isNameValid(newName)) {
             const oldName = NICKNAME;
             NICKNAME = newName.trim();
             await channel.presence.update({ nickname: NICKNAME });
-            displayChatMessage('System', `You are now known as "${NICKNAME}"`, true);
+            displayChatMessage('System', `"${oldName}" is now known as "${NICKNAME}"`, true);
         }
     });
     if (fullscreenBtn && playerWrapper) { fullscreenBtn.addEventListener('click', () => { if (playerWrapper.requestFullscreen) { playerWrapper.requestFullscreen(); } else if (playerWrapper.webkitRequestFullscreen) { playerWrapper.webkitRequestFullscreen(); } }); }
