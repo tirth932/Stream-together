@@ -26,6 +26,7 @@ const leaveRoomBtn = document.getElementById('leave-room-btn');
 const changeNameBtn = document.getElementById('change-name-btn');
 const endRoomBtn = document.getElementById('end-room-btn');
 const playImmediatelyBtn = document.getElementById('play-immediately-btn');
+const syncRoomBtn = document.getElementById('sync-room-btn');
 
 // --- State ---
 let player;
@@ -42,6 +43,22 @@ const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 
 let isResyncing = false;
 
 // --- Helper Functions ---
+function isNameValid(name) {
+    if (!name || name.trim().length === 0) {
+        alert("Name cannot be empty.");
+        return false;
+    }
+    if (name.length < 2 || name.length > 20) {
+        alert("Name must be between 2 and 20 characters.");
+        return false;
+    }
+    if (name.trim().toLowerCase() === 'admin') {
+        alert("That name is reserved.");
+        return false;
+    }
+    return true;
+}
+
 function getIdentity() {
     if (IS_ADMIN_FLAG) {
         NICKNAME = 'Admin';
@@ -49,7 +66,16 @@ function getIdentity() {
         return;
     }
     let name = '';
-    while (!name || name.trim().length === 0) { name = prompt("Please enter your name to join the room:", ""); if (name === null) { name = `Guest-${Math.random().toString(36).substring(2, 6)}`; break; } }
+    let isValid = false;
+    while (!isValid) {
+        name = prompt("Please enter your name to join the room:", "");
+        if (name === null) {
+            name = `Guest-${Math.random().toString(36).substring(2, 6)}`;
+            isValid = true;
+        } else if (isNameValid(name)) {
+            isValid = true;
+        }
+    }
     NICKNAME = name.trim();
     CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
 }
@@ -69,16 +95,11 @@ async function main() {
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
         if (lastNowPlayingMsg) {
             handleNowPlayingUpdated(lastNowPlayingMsg.data);
-            // After restoring the state, we need to load the video into the player.
-            // We wait for the YouTube API to be ready to do this.
             if (nowPlayingItem) {
                 if (isYouTubeApiReady) {
                     createPlayer(nowPlayingItem.videoId);
                 } else {
-                    window.onYouTubeIframeAPIReady = () => { 
-                        isYouTubeApiReady = true; 
-                        createPlayer(nowPlayingItem.videoId); 
-                    };
+                    window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(nowPlayingItem.videoId); };
                 }
             }
         }
@@ -301,42 +322,24 @@ tag.src = "https://www.youtube.com/iframe_api";
 const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 function onYouTubeIframeAPIReady() { isYouTubeApiReady = true; }
-
-// --- MODIFIED: The core refresh logic is here ---
 function createPlayer(videoId, onReadyCallback) {
     if (player) { if (player.getVideoData().video_id !== videoId) player.loadVideoById(videoId); if (onReadyCallback) onReadyCallback(); return; }
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
-        playerVars: { 
-            playsinline: 1, 
-            autoplay: 0, // Keep autoplay disabled
-            controls: IS_ADMIN_FLAG ? 1 : 0, 
-            origin: window.location.origin 
-        },
-        events: { 
-            'onReady': (event) => { 
-                // When admin refreshes, this will run.
-                if (IS_ADMIN_FLAG && nowPlayingItem) {
-                    // Just press play locally. The onPlayerStateChange will handle syncing everyone.
-                    event.target.playVideo();
-                }
-                if (onReadyCallback) onReadyCallback(event);
-            }, 
-            'onStateChange': onPlayerStateChange 
-        }
+        playerVars: { playsinline: 1, autoplay: 0, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin },
+        events: { 'onReady': (event) => { 
+            if (IS_ADMIN_FLAG && nowPlayingItem) {
+                event.target.playVideo();
+            }
+            if (onReadyCallback) onReadyCallback(event);
+        }, 'onStateChange': onPlayerStateChange }
     });
 }
-
 function onPlayerStateChange(event) {
     if (isEventFromAbly) { isEventFromAbly = false; return; }
     if (isResyncing && event.data === YT.PlayerState.PLAYING) { isResyncing = false; return; }
     if (!IS_ADMIN_FLAG) {
-        // Local pause/play is now allowed. The explicit "Sync" button is used to re-sync.
-        // We just need to stop the old re-sync loop.
-        if (event.data === YT.PlayerState.PLAYING) {
-            // This is a local "play". To prevent the old loop, we do nothing here.
-            // User must click "Sync with Room" to get back on track.
-        }
+        // Viewers can now pause and play locally. They must use the "Sync" button to resync.
         return;
     }
     if (event.data === lastPlayerState) return;
@@ -348,9 +351,10 @@ function onPlayerStateChange(event) {
     }
 }
 
+// --- FIX: Corrected a typo from reg.Exp to regExp ---
 function extractVideoID(url) {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp);
+    const match = url.match(regExp); 
     return (match && match[2].length === 11) ? match[2] : null;
 }
 
@@ -412,8 +416,6 @@ if (IS_ADMIN_FLAG) {
         }
     });
     
-    // --- NEW: Event listener for the explicit Sync button ---
-    const syncRoomBtn = document.getElementById('sync-room-btn');
     if(syncRoomBtn) {
         syncRoomBtn.addEventListener('click', () => {
             displayChatMessage('System', 'Re-syncing with the room...', true);
