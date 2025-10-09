@@ -69,10 +69,17 @@ async function main() {
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
         if (lastNowPlayingMsg) {
             handleNowPlayingUpdated(lastNowPlayingMsg.data);
-            if (nowPlayingItem && isYouTubeApiReady) {
-                createPlayer(nowPlayingItem.videoId);
-            } else if (nowPlayingItem) {
-                window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(nowPlayingItem.videoId); };
+            // After restoring the state, we need to load the video into the player.
+            // We wait for the YouTube API to be ready to do this.
+            if (nowPlayingItem) {
+                if (isYouTubeApiReady) {
+                    createPlayer(nowPlayingItem.videoId);
+                } else {
+                    window.onYouTubeIframeAPIReady = () => { 
+                        isYouTubeApiReady = true; 
+                        createPlayer(nowPlayingItem.videoId); 
+                    };
+                }
             }
         }
     } catch (err) { console.error("Could not retrieve channel history:", err); }
@@ -142,7 +149,7 @@ async function getVideoItemFromUrl() {
 function handleAddToQueue(newItem) {
     if (!IS_ADMIN_FLAG) return;
     videoQueue.push(newItem);
-    if (!nowPlayingItem && (!player || player.getPlayerState() === YT.PlayerState.ENDED || player.getPlayerState() === -1 || player.getPlayerState() === 5)) { // 5 = UNSTARTED
+    if (!nowPlayingItem && (!player || [YT.PlayerState.ENDED, YT.PlayerState.UNSTARTED, -1].includes(player.getPlayerState()))) {
         playNextInQueue();
     } else {
         channel.publish('queue-updated', { queue: videoQueue });
@@ -249,8 +256,11 @@ function handleSync(data) {
         isEventFromAbly = true;
         if (data.videoId) {
             isResyncing = true;
-            if (player.getVideoData().video_id === data.videoId) { player.seekTo(data.currentTime, true);
-            } else { player.loadVideoById(data.videoId, data.currentTime); }
+            if (player.getVideoData().video_id === data.videoId) {
+                player.seekTo(data.currentTime, true);
+            } else {
+                player.loadVideoById(data.videoId, data.currentTime);
+            }
             if (data.state === YT.PlayerState.PLAYING) player.playVideo(); else player.pauseVideo();
         }
     };
@@ -292,22 +302,23 @@ const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 function onYouTubeIframeAPIReady() { isYouTubeApiReady = true; }
 
+// --- MODIFIED: The core refresh logic is here ---
 function createPlayer(videoId, onReadyCallback) {
     if (player) { if (player.getVideoData().video_id !== videoId) player.loadVideoById(videoId); if (onReadyCallback) onReadyCallback(); return; }
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
         playerVars: { 
             playsinline: 1, 
-            autoplay: 0, // --- FIX: Disabled autoplay
+            autoplay: 0, // Keep autoplay disabled
             controls: IS_ADMIN_FLAG ? 1 : 0, 
             origin: window.location.origin 
         },
         events: { 
             'onReady': (event) => { 
-                // --- FIX: Admin explicitly plays on refresh and syncs room ---
+                // When admin refreshes, this will run.
                 if (IS_ADMIN_FLAG && nowPlayingItem) {
-                    event.target.playVideo(); 
-                    channel.publish('play', { currentTime: 0 });
+                    // Just press play locally. The onPlayerStateChange will handle syncing everyone.
+                    event.target.playVideo();
                 }
                 if (onReadyCallback) onReadyCallback(event);
             }, 
@@ -320,10 +331,11 @@ function onPlayerStateChange(event) {
     if (isEventFromAbly) { isEventFromAbly = false; return; }
     if (isResyncing && event.data === YT.PlayerState.PLAYING) { isResyncing = false; return; }
     if (!IS_ADMIN_FLAG) {
+        // Local pause/play is now allowed. The explicit "Sync" button is used to re-sync.
+        // We just need to stop the old re-sync loop.
         if (event.data === YT.PlayerState.PLAYING) {
-            player.pauseVideo();
-            displayChatMessage('System', 'Re-syncing with the room...', true);
-            channel.publish('sync-request', { requesterClientId: CLIENT_ID });
+            // This is a local "play". To prevent the old loop, we do nothing here.
+            // User must click "Sync with Room" to get back on track.
         }
         return;
     }
@@ -399,6 +411,16 @@ if (IS_ADMIN_FLAG) {
             displayChatMessage('System', `"${oldName}" is now known as "${NICKNAME}"`, true);
         }
     });
+    
+    // --- NEW: Event listener for the explicit Sync button ---
+    const syncRoomBtn = document.getElementById('sync-room-btn');
+    if(syncRoomBtn) {
+        syncRoomBtn.addEventListener('click', () => {
+            displayChatMessage('System', 'Re-syncing with the room...', true);
+            channel.publish('sync-request', { requesterClientId: CLIENT_ID });
+        });
+    }
+
     if (fullscreenBtn && playerWrapper) { fullscreenBtn.addEventListener('click', () => { if (playerWrapper.requestFullscreen) { playerWrapper.requestFullscreen(); } else if (playerWrapper.webkitRequestFullscreen) { playerWrapper.webkitRequestFullscreen(); } }); }
     if (muteBtn && volumeSlider && volumeOnIcon && volumeOffIcon) {
         muteBtn.addEventListener('click', () => {
