@@ -33,6 +33,7 @@ let isYouTubeApiReady = false;
 let currentVideoId = null;
 let lastPlayerState = -1;
 let NICKNAME;
+let CLIENT_ID; // --- NEW: Stable Client ID ---
 let lastVolume = 100;
 let videoQueue = [];
 let nowPlayingItem = null;
@@ -40,39 +41,66 @@ const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 
 let isResyncing = false;
 
 // --- Helper Functions ---
-function getUserNickname() {
-    if (IS_ADMIN_FLAG) return 'Admin';
+function getIdentity() {
+    if (IS_ADMIN_FLAG) {
+        NICKNAME = 'Admin';
+        CLIENT_ID = 'admin-client'; // Stable ID for admin
+        return;
+    }
     let name = '';
     while (!name || name.trim().length === 0) { name = prompt("Please enter your name to join the room:", ""); if (name === null) { name = `Guest-${Math.random().toString(36).substring(2, 6)}`; break; } }
-    return name.trim();
+    NICKNAME = name.trim();
+    // Create a unique, random ID for viewers
+    CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
 }
 
 // --- Ably Connection & Main Logic ---
 let ably, channel;
 async function main() {
-    NICKNAME = getUserNickname();
-    ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: NICKNAME });
+    getIdentity(); // Get both CLIENT_ID and NICKNAME
+    
+    ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: CLIENT_ID });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
 
+    // Restore state from history BEFORE subscribing
     try {
         await channel.attach();
         const history = await channel.history({ limit: 10, direction: 'backwards' });
+        
         const lastNowPlayingMsg = history.items.find(msg => msg.name === 'now-playing-updated');
         const lastQueueMsg = history.items.find(msg => msg.name === 'queue-updated');
-        if (lastNowPlayingMsg) handleNowPlayingUpdated(lastNowPlayingMsg.data);
+
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
+        if (lastNowPlayingMsg) {
+            handleNowPlayingUpdated(lastNowPlayingMsg.data);
+            // --- FIX: If state is restored, load the video into the player ---
+            if (nowPlayingItem && isYouTubeApiReady) {
+                createPlayer(nowPlayingItem.videoId);
+            } else if (nowPlayingItem) {
+                // Wait for API to be ready, then create player
+                window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(nowPlayingItem.videoId); };
+            }
+        }
+        
         console.log("✅ Room state restored from history.");
+
     } catch (err) { console.error("Could not retrieve channel history:", err); }
 
+    // Continue with normal setup
     await channel.presence.enter({ nickname: NICKNAME });
     channel.subscribe(handleAblyMessages);
     channel.presence.subscribe(['enter', 'leave', 'update'], updateParticipantList);
     updateParticipantList();
-    if (!IS_ADMIN_FLAG && !nowPlayingItem) { channel.publish('request-join', { nickname: NICKNAME }); }
+    
+    // --- FIX: Viewer always requests sync on join/refresh ---
+    if (!IS_ADMIN_FLAG) {
+        if (waitingOverlay) waitingOverlay.style.display = 'flex'; // Ensure overlay is visible
+        channel.publish('request-join', { nickname: NICKNAME });
+    }
     window.addEventListener('beforeunload', () => { if (channel) channel.presence.leave(); });
 }
 
-// --- Ably Message Handler ---
+// --- Ably Message Handler (rest of the file is mostly the same, with small fixes) ---
 function handleAblyMessages(message) {
     switch (message.name) {
         case 'set-video': handleSetVideo(message.data); break;
@@ -81,8 +109,8 @@ function handleAblyMessages(message) {
         case 'request-join': if (IS_ADMIN_FLAG) handleJoinRequest(message.data); break;
         case 'approve-join': if (message.data.approvedNickname === NICKNAME) handleApproval(); break;
         case 'sync-request': if (IS_ADMIN_FLAG) handleSyncRequest(message.data); break;
-        case 'sync-response': if (message.data.targetNickname === NICKNAME) handleSync(message.data); break;
-        case 'kick-user': if (message.data.kickedClientId === ably.auth.clientId) handleKick(); break;
+        case 'sync-response': if (message.data.targetClientId === CLIENT_ID) handleSync(message.data); break;
+        case 'kick-user': if (message.data.kickedClientId === CLIENT_ID) handleKick(); break;
         case 'chat-message': displayChatMessage(message.data.nickname, message.data.text, message.data.isSystem); break;
         case 'add-to-queue': if (IS_ADMIN_FLAG) handleAddToQueue(message.data); break;
         case 'queue-updated': handleQueueUpdated(message.data); break;
@@ -146,7 +174,6 @@ function renderQueue() {
     videoQueue.forEach((item, index) => {
         const queueEl = document.createElement('div');
         queueEl.className = 'flex items-center gap-3 bg-gray-800/50 p-2 rounded-md';
-        // --- FIX: Added 'min-w-0' to the div containing the text ---
         queueEl.innerHTML = `<span class="font-bold text-gray-400">${index + 1}</span><img src="${item.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm min-w-0"><p class="font-semibold text-gray-200 truncate">${item.title}</p><p class="text-gray-400">Added by: ${item.addedBy}</p></div>`;
         queueListContainer.appendChild(queueEl);
     });
@@ -157,7 +184,6 @@ function renderNowPlaying() {
         nowPlayingCard.innerHTML = `<p class="text-gray-400 text-sm italic">Nothing is currently playing.</p>`;
         return;
     }
-    // --- FIX: Added 'min-w-0' to the div containing the text ---
     nowPlayingCard.innerHTML = `<div class="flex items-center gap-3 bg-green-900/30 p-2 rounded-md border border-green-500"><img src="${nowPlayingItem.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm min-w-0"><p class="font-semibold text-gray-100 truncate">${nowPlayingItem.title}</p><p class="text-green-300">Added by: ${nowPlayingItem.addedBy}</p></div></div>`;
 }
 function playNextInQueue() {
@@ -191,8 +217,9 @@ async function updateParticipantList() {
     participantCount.textContent = members.length;
     userListContainer.innerHTML = '';
     members.forEach(member => {
-        const displayName = member.data.nickname || member.clientId; 
-        const isAdmin = displayName.toLowerCase() === 'admin';
+        // --- FIX: Reliably get the display name from presence data ---
+        const displayName = member.data ? member.data.nickname : member.clientId;
+        const isAdmin = member.clientId === 'admin-client';
         const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" class="kick-btn bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1 px-2 rounded">Kick</button>` : '';
         const adminTagHTML = isAdmin ? `<span class="text-xs font-bold text-purple-400">[Admin]</span>` : '';
         const userEl = document.createElement('div');
@@ -207,31 +234,37 @@ function kickUser(clientId) { if (!IS_ADMIN_FLAG) return; channel.publish('kick-
 // --- Sync & User Logic ---
 function handleSyncRequest(data) {
     if (!player || player.getPlayerState() === -1) return;
-    const syncData = { videoId: currentVideoId, currentTime: player.getCurrentTime(), state: player.getPlayerState(), targetNickname: data.requesterNickname, nowPlaying: nowPlayingItem, queue: videoQueue };
+    const syncData = { videoId: currentVideoId, currentTime: player.getCurrentTime(), state: player.getPlayerState(), targetClientId: data.requesterClientId, nowPlaying: nowPlayingItem, queue: videoQueue };
     channel.publish('sync-response', syncData);
 }
 function handleSync(data) {
     if(data.nowPlaying) handleNowPlayingUpdated({ item: data.nowPlaying });
     if(data.queue) handleQueueUpdated({ queue: data.queue });
-    const applyVideoSync = () => { isEventFromAbly = true; if(data.videoId) { isResyncing = true; player.loadVideoById(data.videoId, data.currentTime); }};
+    const applyVideoSync = () => {
+        isEventFromAbly = true; if(data.videoId) {
+            isResyncing = true;
+            if (player.getVideoData().video_id === data.videoId) {
+                player.seekTo(data.currentTime, true);
+            } else {
+                player.loadVideoById(data.videoId, data.currentTime);
+            }
+            if (data.state === YT.PlayerState.PLAYING) player.playVideo(); else player.pauseVideo();
+        }
+    };
     if (!isYouTubeApiReady) { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(data.videoId, applyVideoSync); };
     } else if (!player) { createPlayer(data.videoId, applyVideoSync);
     } else { applyVideoSync(); }
 }
 function handleApproval() {
     if (waitingOverlay) waitingOverlay.style.display = 'none';
-    channel.publish('sync-request', { requesterNickname: NICKNAME });
+    channel.publish('sync-request', { requesterClientId: CLIENT_ID });
     displayChatMessage('System', 'You have been admitted to the room.', true);
 }
 function handleKick() {
-    alert("You have been removed from the room by the admin.");
-    ably.close();
-    window.location.href = '/';
+    alert("You have been removed from the room by the admin."); ably.close(); window.location.href = '/';
 }
 function handleRoomEnded(data) {
-    alert(data.message);
-    ably.close();
-    window.location.href = '/';
+    alert(data.message); ably.close(); window.location.href = '/';
 }
 
 // --- Real-time Video Control Handlers ---
@@ -254,7 +287,14 @@ function createPlayer(videoId, onReadyCallback) {
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
         playerVars: { playsinline: 1, autoplay: 1, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin },
-        events: { 'onReady': (event) => { if (onReadyCallback) onReadyCallback(event); }, 'onStateChange': onPlayerStateChange }
+        events: { 'onReady': (event) => { 
+            // --- FIX: If admin refreshes, resync the room from t=0 ---
+            if (IS_ADMIN_FLAG && nowPlayingItem) {
+                displayChatMessage('System', 'Admin has reconnected, re-syncing room...', true);
+                channel.publish('play', { currentTime: 0 });
+            }
+            if (onReadyCallback) onReadyCallback(event);
+        }, 'onStateChange': onPlayerStateChange }
     });
 }
 function onPlayerStateChange(event) {
@@ -264,7 +304,7 @@ function onPlayerStateChange(event) {
         if (event.data === YT.PlayerState.PLAYING) {
             player.pauseVideo();
             displayChatMessage('System', 'Re-syncing with the room...', true);
-            channel.publish('sync-request', { requesterNickname: NICKNAME });
+            channel.publish('sync-request', { requesterClientId: CLIENT_ID });
         }
         return;
     }
