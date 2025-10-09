@@ -1,6 +1,7 @@
 const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 const ROOM_ID = document.location.pathname.split('/').pop();
-const IS_ADMIN_FLAG = document.title.includes('Admin Control');
+// --- FIX: Using a more reliable method to check for admin status ---
+const IS_ADMIN_FLAG = window.location.pathname.startsWith('/admin/');
 
 // --- DOM Elements ---
 const urlInput = document.getElementById('youtube-url');
@@ -83,7 +84,7 @@ async function main() {
     updateParticipantList();
     if (!IS_ADMIN_FLAG) {
         if (waitingOverlay) waitingOverlay.style.display = 'flex';
-        channel.publish('request-join', { nickname: NICKNAME });
+        requestToJoinWithRetry();
     }
     window.addEventListener('beforeunload', () => { if (channel) channel.presence.leave(); });
 }
@@ -95,7 +96,7 @@ function handleAblyMessages(message) {
         case 'play': handlePlay(message.data); break;
         case 'pause': handlePause(); break;
         case 'request-join': if (IS_ADMIN_FLAG) handleJoinRequest(message.data); break;
-        case 'approve-join': if (message.data.approvedNickname === NICKNAME) handleApproval(); break;
+        case 'approve-join': if (message.data.approvedClientId === CLIENT_ID) handleApproval(); break;
         case 'sync-request': if (IS_ADMIN_FLAG) handleSyncRequest(message.data); break;
         case 'sync-response': if (message.data.targetClientId === CLIENT_ID) handleSync(message.data); break;
         case 'kick-user': if (message.data.kickedClientId === CLIENT_ID) handleKick(); break;
@@ -212,7 +213,7 @@ async function updateParticipantList() {
     participantCount.textContent = members.length;
     userListContainer.innerHTML = '';
     members.forEach(member => {
-        const displayName = member.data ? member.data.nickname : member.clientId;
+        const displayName = member.data ? member.data.nickname : member.clientId; 
         const isAdmin = member.clientId === 'admin-client';
         const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" title="Kick User" class="kick-btn p-1 text-red-400 hover:text-red-200">🚫</button>` : '';
         const promoteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-promote-id="${member.clientId}" title="Make Admin" class="promote-btn p-1 text-yellow-400 hover:text-yellow-200">👑</button>` : '';
@@ -223,7 +224,7 @@ async function updateParticipantList() {
         userListContainer.appendChild(userEl);
     });
 }
-function handleJoinRequest(data) { channel.publish('approve-join', { approvedNickname: data.nickname }); }
+function handleJoinRequest(data) { channel.publish('approve-join', { approvedClientId: data.clientId, approvedNickname: data.nickname }); }
 function kickUser(clientId) { if (!IS_ADMIN_FLAG) return; channel.publish('kick-user', { kickedClientId: clientId }); }
 
 function handlePromotion(data) {
@@ -260,6 +261,18 @@ function handleSync(data) {
     } else if (!player) { createPlayer(data.videoId, applyVideoSync);
     } else { applyVideoSync(); }
 }
+
+function requestToJoinWithRetry() {
+    console.log("Requesting to join...");
+    channel.publish('request-join', { nickname: NICKNAME, clientId: CLIENT_ID });
+    setTimeout(() => {
+        if (waitingOverlay && waitingOverlay.style.display !== 'none') {
+            console.log("Join approval not received, retrying...");
+            requestToJoinWithRetry();
+        }
+    }, 5000);
+}
+
 function handleApproval() {
     if (waitingOverlay) waitingOverlay.style.display = 'none';
     channel.publish('sync-request', { requesterClientId: CLIENT_ID });
@@ -284,16 +297,11 @@ const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 function onYouTubeIframeAPIReady() { isYouTubeApiReady = true; }
 function createPlayer(videoId, onReadyCallback) {
-    if (player) {
-        // If player exists, just load the new video.
-        player.loadVideoById(videoId);
-        if (onReadyCallback) onReadyCallback();
-        return;
-    }
+    if (player) { if (player.getVideoData().video_id !== videoId) player.loadVideoById(videoId); if (onReadyCallback) onReadyCallback(); return; }
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
         playerVars: { playsinline: 1, autoplay: 1, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin },
-        events: { 'onReady': (event) => {
+        events: { 'onReady': (event) => { 
             if (IS_ADMIN_FLAG && nowPlayingItem) {
                 channel.publish('play', { currentTime: 0 });
             }
