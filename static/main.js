@@ -33,6 +33,7 @@ let lastVolume = 100;
 let videoQueue = [];
 let nowPlayingItem = null;
 const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)';
+let isResyncing = false; // --- FIX: Flag to prevent re-sync loop ---
 
 // --- Helper Functions ---
 function getUserNickname() {
@@ -91,7 +92,6 @@ function updateBackgroundColor(imageUrl) {
     });
     img.addEventListener('error', () => { dynamicBackground.style.backgroundImage = defaultBackground; });
 }
-
 
 // --- Queue & Now Playing Logic ---
 async function addVideoToQueue() {
@@ -195,7 +195,7 @@ function handleSyncRequest(data) {
     const syncData = { videoId: currentVideoId, currentTime: player.getCurrentTime(), state: player.getPlayerState(), targetNickname: data.requesterNickname, nowPlaying: nowPlayingItem, queue: videoQueue };
     channel.publish('sync-response', syncData);
 }
-// --- MODIFIED: This function is now more robust for re-syncing ---
+
 function handleSync(data) {
     if(data.nowPlaying) handleNowPlayingUpdated({ item: data.nowPlaying });
     if(data.queue) handleQueueUpdated({ queue: data.queue });
@@ -204,8 +204,8 @@ function handleSync(data) {
         isEventFromAbly = true;
         if(data.videoId) {
             player.seekTo(data.currentTime, true);
-            // Only play if the admin's player is also playing
             if (data.state === YT.PlayerState.PLAYING) {
+                isResyncing = true; // --- FIX: Set the flag before playing ---
                 player.playVideo();
             } else {
                 player.pauseVideo();
@@ -255,18 +255,21 @@ function createPlayer(videoId, onReadyCallback) {
 function onPlayerStateChange(event) {
     if (isEventFromAbly) { isEventFromAbly = false; return; }
 
-    // --- NEW: Viewer pause/resume logic ---
+    // --- FIX: Check the isResyncing flag to break the loop ---
+    if (isResyncing && event.data === YT.PlayerState.PLAYING) {
+        isResyncing = false; // Consume the flag
+        return; // This was a sync-play, so we allow it and do nothing else.
+    }
+
     if (!IS_ADMIN_FLAG) {
-        // If viewer presses play, don't play locally. Instead, request a sync.
         if (event.data === YT.PlayerState.PLAYING) {
-            player.pauseVideo(); // Immediately pause to prevent playing at the wrong time
+            player.pauseVideo();
             displayChatMessage('System', 'Re-syncing with the room...', true);
             channel.publish('sync-request', { requesterNickname: NICKNAME });
         }
-        return; // Viewers do not broadcast any state changes
+        return;
     }
     
-    // --- Admin state change logic (unchanged) ---
     if (event.data === lastPlayerState) return;
     lastPlayerState = event.data;
     switch (event.data) {
@@ -278,7 +281,7 @@ function onPlayerStateChange(event) {
 
 function extractVideoID(url) {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(reg.Exp);
+    const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
 }
 
