@@ -339,7 +339,7 @@ function onPlayerStateChange(event) {
     if (isEventFromAbly) { isEventFromAbly = false; return; }
     if (isResyncing && event.data === YT.PlayerState.PLAYING) { isResyncing = false; return; }
     if (!IS_ADMIN_FLAG) {
-        // Viewers can now pause and play locally. They must use the "Sync" button to resync.
+        // Local pause/play is now allowed. They must use the explicit "Sync with Room" button to resync.
         return;
     }
     if (event.data === lastPlayerState) return;
@@ -351,10 +351,10 @@ function onPlayerStateChange(event) {
     }
 }
 
-// --- FIX: Corrected a typo from reg.Exp to regExp ---
+// --- CRITICAL FIX: Corrected the typo and added support for Shorts URLs ---
 function extractVideoID(url) {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp); 
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
 }
 
