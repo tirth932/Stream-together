@@ -1,6 +1,5 @@
 const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 const ROOM_ID = document.location.pathname.split('/').pop();
-// --- FIX: Using a more reliable method to check for admin status ---
 const IS_ADMIN_FLAG = window.location.pathname.startsWith('/admin/');
 
 // --- DOM Elements ---
@@ -43,6 +42,23 @@ const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 
 let isResyncing = false;
 
 // --- Helper Functions ---
+// --- NEW: Validation function for names ---
+function isNameValid(name) {
+    if (!name || name.trim().length === 0) {
+        alert("Name cannot be empty.");
+        return false;
+    }
+    if (name.length < 2 || name.length > 20) {
+        alert("Name must be between 2 and 20 characters.");
+        return false;
+    }
+    if (name.trim().toLowerCase() === 'admin') {
+        alert("That name is reserved.");
+        return false;
+    }
+    return true;
+}
+
 function getIdentity() {
     if (IS_ADMIN_FLAG) {
         NICKNAME = 'Admin';
@@ -50,7 +66,16 @@ function getIdentity() {
         return;
     }
     let name = '';
-    while (!name || name.trim().length === 0) { name = prompt("Please enter your name to join the room:", ""); if (name === null) { name = `Guest-${Math.random().toString(36).substring(2, 6)}`; break; } }
+    let isValid = false;
+    while (!isValid) {
+        name = prompt("Please enter your name to join the room:", "");
+        if (name === null) { // User clicked cancel
+            name = `Guest-${Math.random().toString(36).substring(2, 6)}`;
+            isValid = true;
+        } else if (isNameValid(name)) {
+            isValid = true;
+        }
+    }
     NICKNAME = name.trim();
     CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
 }
@@ -139,7 +164,6 @@ async function getVideoItemFromUrl() {
         return { videoId: videoId, title: details.title, thumbnail: details.thumbnail, addedBy: NICKNAME };
     } catch (error) { console.error("Error getting video details:", error); alert(error.message); return null; }
 }
-
 function handleAddToQueue(newItem) {
     if (!IS_ADMIN_FLAG) return;
     videoQueue.push(newItem);
@@ -193,10 +217,26 @@ function playNextInQueue() {
 }
 
 // --- Chat Logic ---
+// --- MODIFIED: Added validation and rate limiting ---
 function sendChatMessage() {
     const text = chatInput.value.trim();
-    if (text) { channel.publish('chat-message', { nickname: NICKNAME, text: text }); chatInput.value = ''; }
+    if (text === '') return;
+
+    if (text.length > 280) {
+        alert("Your message is too long (max 280 characters).");
+        return;
+    }
+
+    channel.publish('chat-message', { nickname: NICKNAME, text: text });
+    chatInput.value = '';
+
+    // Cooldown to prevent spam
+    sendChatBtn.disabled = true;
+    setTimeout(() => {
+        sendChatBtn.disabled = false;
+    }, 2000); // 2-second cooldown
 }
+
 function displayChatMessage(nickname, text, isSystem = false) {
     const isAdminMessage = nickname.toLowerCase() === 'admin';
     const messageEl = document.createElement('div');
@@ -385,11 +425,11 @@ if (IS_ADMIN_FLAG) {
     leaveRoomBtn.addEventListener('click', () => { ably.close(); window.location.href = '/'; });
     changeNameBtn.addEventListener('click', async () => {
         const newName = prompt("Enter your new name:", NICKNAME);
-        if (newName && newName.trim() !== '') {
+        if (isNameValid(newName)) { // --- MODIFIED: Use validation ---
             const oldName = NICKNAME;
             NICKNAME = newName.trim();
             await channel.presence.update({ nickname: NICKNAME });
-            displayChatMessage('System', `"${oldName}" is now known as "${NICKNAME}"`, true);
+            displayChatMessage('System', `You are now known as "${NICKNAME}"`, true);
         }
     });
     if (fullscreenBtn && playerWrapper) { fullscreenBtn.addEventListener('click', () => { if (playerWrapper.requestFullscreen) { playerWrapper.requestFullscreen(); } else if (playerWrapper.webkitRequestFullscreen) { playerWrapper.webkitRequestFullscreen(); } }); }
