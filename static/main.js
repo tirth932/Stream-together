@@ -21,6 +21,7 @@ let player;
 let isEventFromAbly = false;
 let isYouTubeApiReady = false;
 let currentVideoId = null;
+let lastPlayerState = -1; // *** FIX: Added to track the last known player state ***
 
 // --- Connect to Ably ---
 const ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: NICKNAME });
@@ -227,11 +228,24 @@ function onPlayerReady(event) {
 }
 
 function onPlayerStateChange(event) {
-    if (!IS_ADMIN || isEventFromAbly) {
+    // Ignore events that come from Ably messages
+    if (isEventFromAbly) {
         isEventFromAbly = false;
         return;
     }
+    // Only the admin can send sync events
+    if (!IS_ADMIN) {
+        return;
+    }
+
+    // *** FIX: Check if the state has actually changed before sending a message ***
+    if (event.data === lastPlayerState) {
+        return;
+    }
+    // Update the last known state
+    lastPlayerState = event.data;
     
+    // Send message based on the new state
     switch (event.data) {
         case YT.PlayerState.PLAYING:
             channel.publish('play', { currentTime: player.getCurrentTime() });
