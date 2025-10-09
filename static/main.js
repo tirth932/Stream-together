@@ -1,7 +1,6 @@
 const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 const ROOM_ID = document.location.pathname.split('/').pop();
-const IS_ADMIN = document.getElementById('add-to-queue-controls') === null; // Logic inverted, but this element is now gone. Let's find a better way. The Jinja template still tells us.
-const IS_ADMIN_FLAG = document.querySelector('p:not(.text-blue-400) > .text-purple-400') !== null; // A robust way to check if the user is admin based on the welcome text.
+const IS_ADMIN_FLAG = document.querySelector('p:not(.text-blue-400) > .text-purple-400') !== null;
 
 // --- DOM Elements ---
 const urlInput = document.getElementById('youtube-url');
@@ -12,6 +11,8 @@ const chatMessagesContainer = document.getElementById('chat-messages');
 const userListContainer = document.getElementById('user-list');
 const participantCount = document.getElementById('participant-count');
 const queueListContainer = document.getElementById('queue-list');
+const nowPlayingCard = document.getElementById('now-playing-card');
+const dynamicBackground = document.getElementById('dynamic-background'); // --- NEW ---
 const waitingOverlay = document.getElementById('waiting-overlay');
 const playerWrapper = document.getElementById('player-wrapper');
 // Viewer-specific controls
@@ -29,16 +30,15 @@ let currentVideoId = null;
 let lastPlayerState = -1;
 let NICKNAME;
 let lastVolume = 100;
-let videoQueue = []; // NEW: The shared video queue
+let videoQueue = [];
+let nowPlayingItem = null;
+const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)'; // --- NEW ---
 
 // --- Helper Functions ---
 function getUserNickname() {
     if (IS_ADMIN_FLAG) return 'Admin';
     let name = '';
-    while (!name || name.trim().length === 0) {
-        name = prompt("Please enter your name to join the room:", "");
-        if (name === null) { name = `Guest-${Math.random().toString(36).substring(2, 6)}`; break; }
-    }
+    while (!name || name.trim().length === 0) { name = prompt("Please enter your name to join the room:", ""); if (name === null) { name = `Guest-${Math.random().toString(36).substring(2, 6)}`; break; } }
     return name.trim();
 }
 
@@ -48,15 +48,11 @@ async function main() {
     NICKNAME = getUserNickname();
     ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: NICKNAME });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
-    
     await channel.presence.enter();
     channel.subscribe(handleAblyMessages);
     channel.presence.subscribe(['enter', 'leave'], updateParticipantList);
     updateParticipantList();
-
-    if (!IS_ADMIN_FLAG) {
-        channel.publish('request-join', { nickname: NICKNAME });
-    }
+    if (!IS_ADMIN_FLAG) { channel.publish('request-join', { nickname: NICKNAME }); }
     window.addEventListener('beforeunload', () => { if (channel) channel.presence.leave(); });
 }
 
@@ -72,109 +68,119 @@ function handleAblyMessages(message) {
         case 'sync-response': if (message.data.targetNickname === NICKNAME) handleSync(message.data); break;
         case 'kick-user': if (message.data.kickedNickname === NICKNAME) handleKick(); break;
         case 'chat-message': displayChatMessage(message.data.nickname, message.data.text, message.data.isSystem); break;
-        
-        // --- NEW: Queue Management Messages ---
         case 'add-to-queue': if (IS_ADMIN_FLAG) handleAddToQueue(message.data); break;
         case 'queue-updated': handleQueueUpdated(message.data); break;
+        case 'now-playing-updated': handleNowPlayingUpdated(message.data); break;
     }
 }
 
-// --- Queue Logic ---
-async function addVideoToQueue() {
-    const videoId = extractVideoID(urlInput.value);
-    if (!videoId) {
-        alert("Invalid YouTube URL.");
+// --- NEW: Background Sync Logic ---
+function updateBackgroundColor(imageUrl) {
+    if (!imageUrl || typeof ColorThief === 'undefined') {
+        dynamicBackground.style.backgroundImage = defaultBackground;
         return;
     }
+    
+    // Request a higher quality thumbnail for better color accuracy
+    const highQualityUrl = imageUrl.replace('default.jpg', 'hqdefault.jpg');
+    
+    const colorThief = new ColorThief();
+    const img = new Image();
+    img.crossOrigin = 'Anonymous'; // This is crucial for CORS
+    img.src = highQualityUrl;
 
+    img.addEventListener('load', () => {
+        try {
+            const palette = colorThief.getPalette(img, 2); // Get the 2 most dominant colors
+            const color1 = palette[0];
+            const color2 = palette[1];
+            
+            // Set the new gradient
+            dynamicBackground.style.backgroundImage = `
+                radial-gradient(at 20% 20%, rgba(${color1[0]}, ${color1[1]}, ${color1[2]}, 0.3) 0px, transparent 50%),
+                radial-gradient(at 80% 80%, rgba(${color2[0]}, ${color2[1]}, ${color2[2]}, 0.25) 0px, transparent 50%)
+            `;
+        } catch(e) {
+            console.error("ColorThief error:", e);
+            dynamicBackground.style.backgroundImage = defaultBackground; // Fallback
+        }
+    });
+
+    img.addEventListener('error', () => {
+        console.error("Could not load image for color extraction.");
+        dynamicBackground.style.backgroundImage = defaultBackground; // Fallback
+    });
+}
+
+
+// --- Queue & Now Playing Logic ---
+async function addVideoToQueue() {
+    const videoId = extractVideoID(urlInput.value);
+    if (!videoId) { alert("Invalid YouTube URL."); return; }
     try {
-        addToQueueBtn.disabled = true;
-        addToQueueBtn.textContent = "Adding...";
+        addToQueueBtn.disabled = true; addToQueueBtn.textContent = "Adding...";
         const response = await fetch(`/api/video-details?id=${videoId}`);
         if (!response.ok) throw new Error("Could not fetch video details.");
-        
         const details = await response.json();
-        const queueItem = {
-            videoId: videoId,
-            title: details.title,
-            thumbnail: details.thumbnail,
-            addedBy: NICKNAME
-        };
-        
-        // Send the request to the admin to add the item
+        const queueItem = { videoId: videoId, title: details.title, thumbnail: details.thumbnail, addedBy: NICKNAME };
         channel.publish('add-to-queue', queueItem);
         urlInput.value = '';
-
-    } catch (error) {
-        console.error("Error adding video to queue:", error);
-        alert(error.message);
-    } finally {
-        addToQueueBtn.disabled = false;
-        addToQueueBtn.textContent = "Add to Queue";
-    }
+    } catch (error) { console.error("Error adding video to queue:", error); alert(error.message);
+    } finally { addToQueueBtn.disabled = false; addToQueueBtn.textContent = "Add to Queue"; }
 }
 
 function handleAddToQueue(newItem) {
-    if (!IS_ADMIN_FLAG) return; // Only admin manages the queue
+    if (!IS_ADMIN_FLAG) return;
     videoQueue.push(newItem);
-    // If nothing is playing and this is the first item, start playing it
-    if (!player || player.getPlayerState() === YT.PlayerState.ENDED || player.getPlayerState() === -1) {
+    if (!nowPlayingItem && (!player || player.getPlayerState() === YT.PlayerState.ENDED || player.getPlayerState() === -1)) {
         playNextInQueue();
     } else {
-        // Otherwise, just notify everyone of the updated queue
         channel.publish('queue-updated', { queue: videoQueue });
     }
 }
 
-function handleQueueUpdated({ queue }) {
-    videoQueue = queue;
-    renderQueue();
+function handleQueueUpdated({ queue }) { videoQueue = queue; renderQueue(); }
+
+function handleNowPlayingUpdated({ item }) {
+    nowPlayingItem = item;
+    renderNowPlaying();
+    updateBackgroundColor(item ? item.thumbnail : null); // --- MODIFIED ---
 }
 
 function renderQueue() {
     if (!queueListContainer) return;
     queueListContainer.innerHTML = '';
-    if (videoQueue.length === 0) {
-        queueListContainer.innerHTML = `<p class="text-gray-400 text-sm italic">The queue is empty.</p>`;
-        return;
-    }
+    if (videoQueue.length === 0) { queueListContainer.innerHTML = `<p class="text-gray-400 text-sm italic">The queue is empty.</p>`; return; }
     videoQueue.forEach((item, index) => {
         const queueEl = document.createElement('div');
         queueEl.className = 'flex items-center gap-3 bg-gray-800/50 p-2 rounded-md';
-        queueEl.innerHTML = `
-            <span class="font-bold text-gray-400">${index + 1}</span>
-            <img src="${item.thumbnail}" class="w-16 h-12 object-cover rounded">
-            <div class="flex-1 text-sm">
-                <p class="font-semibold text-gray-200 truncate">${item.title}</p>
-                <p class="text-gray-400">Added by: ${item.addedBy}</p>
-            </div>
-        `;
+        queueEl.innerHTML = `<span class="font-bold text-gray-400">${index + 1}</span><img src="${item.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm"><p class="font-semibold text-gray-200 truncate">${item.title}</p><p class="text-gray-400">Added by: ${item.addedBy}</p></div>`;
         queueListContainer.appendChild(queueEl);
     });
 }
 
+function renderNowPlaying() {
+    if (!nowPlayingCard) return;
+    if (!nowPlayingItem) {
+        nowPlayingCard.innerHTML = `<p class="text-gray-400 text-sm italic">Nothing is currently playing.</p>`;
+        return;
+    }
+    nowPlayingCard.innerHTML = `<div class="flex items-center gap-3 bg-green-900/30 p-2 rounded-md border border-green-500"><img src="${nowPlayingItem.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm"><p class="font-semibold text-gray-100 truncate">${nowPlayingItem.title}</p><p class="text-green-300">Added by: ${nowPlayingItem.addedBy}</p></div></div>`;
+}
+
 function playNextInQueue() {
-    if (!IS_ADMIN_FLAG) return; // Only admin can trigger next video
+    if (!IS_ADMIN_FLAG) return;
     if (videoQueue.length === 0) {
+        channel.publish('now-playing-updated', { item: null });
         console.log("Queue finished.");
         return;
     }
-    const nextItem = videoQueue.shift(); // Get and remove the first item
-    
-    // Announce the new video
-    channel.publish('chat-message', { 
-        nickname: 'System', 
-        text: `Now playing "${nextItem.title}" (added by ${nextItem.addedBy})`,
-        isSystem: true
-    });
-    
-    // Tell everyone to set the new video
+    const nextItem = videoQueue.shift();
+    channel.publish('chat-message', { nickname: 'System', text: `Now playing "${nextItem.title}" (added by ${nextItem.addedBy})`, isSystem: true });
+    channel.publish('now-playing-updated', { item: nextItem });
     channel.publish('set-video', { videoId: nextItem.videoId });
-    
-    // Tell everyone about the updated queue
     channel.publish('queue-updated', { queue: videoQueue });
 }
-
 
 // --- Chat Logic ---
 function sendChatMessage() {
@@ -184,11 +190,8 @@ function sendChatMessage() {
 function displayChatMessage(nickname, text, isSystem = false) {
     const isAdminMessage = nickname.toLowerCase() === 'admin';
     const messageEl = document.createElement('div');
-    if (isSystem) {
-        messageEl.innerHTML = `<p class="text-sm text-purple-300 italic">${text}</p>`;
-    } else {
-        messageEl.innerHTML = `<p class="text-sm"><strong class="${isAdminMessage ? 'text-purple-400' : 'text-blue-300'}">${nickname}:</strong> <span class="text-gray-200">${text}</span></p>`;
-    }
+    if (isSystem) { messageEl.innerHTML = `<p class="text-sm text-purple-300 italic">${text}</p>`;
+    } else { messageEl.innerHTML = `<p class="text-sm"><strong class="${isAdminMessage ? 'text-purple-400' : 'text-blue-300'}">${nickname}:</strong> <span class="text-gray-200">${text}</span></p>`; }
     chatMessagesContainer.appendChild(messageEl);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 }
@@ -214,15 +217,17 @@ function kickUser(nickname) { if (!IS_ADMIN_FLAG) return; channel.publish('kick-
 
 // --- Sync & User Logic ---
 function handleSyncRequest(data) {
-    if (!player || !currentVideoId || player.getPlayerState() === -1) return;
-    const syncData = { videoId: currentVideoId, currentTime: player.getCurrentTime(), state: player.getPlayerState(), targetNickname: data.requesterNickname };
+    if (!player || player.getPlayerState() === -1) return;
+    const syncData = { videoId: currentVideoId, currentTime: player.getCurrentTime(), state: player.getPlayerState(), targetNickname: data.requesterNickname, nowPlaying: nowPlayingItem, queue: videoQueue };
     channel.publish('sync-response', syncData);
 }
 function handleSync(data) {
-    const applySyncData = () => { isEventFromAbly = true; player.loadVideoById(data.videoId, data.currentTime); };
-    if (!isYouTubeApiReady) { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(data.videoId, applySyncData); };
-    } else if (!player) { createPlayer(data.videoId, applySyncData);
-    } else { applySyncData(); }
+    handleNowPlayingUpdated({ item: data.nowPlaying });
+    handleQueueUpdated({ queue: data.queue });
+    const applyVideoSync = () => { isEventFromAbly = true; if(data.videoId) { player.loadVideoById(data.videoId, data.currentTime); }};
+    if (!isYouTubeApiReady) { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(data.videoId, applyVideoSync); };
+    } else if (!player) { createPlayer(data.videoId, applyVideoSync);
+    } else { applyVideoSync(); }
 }
 function handleApproval() {
     if (waitingOverlay) waitingOverlay.style.display = 'none';
@@ -268,12 +273,12 @@ function onPlayerStateChange(event) {
     switch (event.data) {
         case YT.PlayerState.PLAYING: channel.publish('play', { currentTime: player.getCurrentTime() }); break;
         case YT.PlayerState.PAUSED: channel.publish('pause', {}); break;
-        case YT.PlayerState.ENDED: playNextInQueue(); break; // NEW: Play next video when one ends
+        case YT.PlayerState.ENDED: playNextInQueue(); break;
     }
 }
 
 function extractVideoID(url) {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch?v=|\&v=)([^#\&\?]*).*/;
     const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
 }
@@ -283,39 +288,22 @@ addToQueueBtn.addEventListener('click', addVideoToQueue);
 
 if (IS_ADMIN_FLAG) {
     userListContainer.addEventListener('click', (e) => {
-        if (e.target.closest('.kick-btn')) {
-            const nicknameToKick = e.target.closest('.kick-btn').dataset.kickId;
-            if (nicknameToKick) kickUser(nicknameToKick);
-        }
+        const kickBtn = e.target.closest('.kick-btn');
+        if (kickBtn) { const nicknameToKick = kickBtn.dataset.kickId; if (nicknameToKick) kickUser(nicknameToKick); }
     });
 } else {
     // Viewer-Specific Control Logic
-    if (fullscreenBtn && playerWrapper) {
-        fullscreenBtn.addEventListener('click', () => {
-            if (playerWrapper.requestFullscreen) { playerWrapper.requestFullscreen();
-            } else if (playerWrapper.webkitRequestFullscreen) { playerWrapper.webkitRequestFullscreen(); }
-        });
-    }
+    if (fullscreenBtn && playerWrapper) { fullscreenBtn.addEventListener('click', () => { if (playerWrapper.requestFullscreen) { playerWrapper.requestFullscreen(); } else if (playerWrapper.webkitRequestFullscreen) { playerWrapper.webkitRequestFullscreen(); } }); }
     if (muteBtn && volumeSlider && volumeOnIcon && volumeOffIcon) {
         muteBtn.addEventListener('click', () => {
-            if (player.isMuted()) {
-                player.unMute(); player.setVolume(lastVolume); volumeSlider.value = lastVolume;
-                volumeOnIcon.classList.remove('hidden'); volumeOffIcon.classList.add('hidden');
-            } else {
-                lastVolume = player.getVolume(); player.mute(); volumeSlider.value = 0;
-                volumeOnIcon.classList.add('hidden'); volumeOffIcon.classList.remove('hidden');
-            }
+            if (player.isMuted()) { player.unMute(); player.setVolume(lastVolume); volumeSlider.value = lastVolume; volumeOnIcon.classList.remove('hidden'); volumeOffIcon.classList.add('hidden');
+            } else { lastVolume = player.getVolume(); player.mute(); volumeSlider.value = 0; volumeOnIcon.classList.add('hidden'); volumeOffIcon.classList.remove('hidden'); }
         });
         volumeSlider.addEventListener('input', (e) => {
             const newVolume = e.target.value;
             player.setVolume(newVolume); lastVolume = newVolume;
-            if (newVolume > 0 && player.isMuted()) {
-                player.unMute();
-                volumeOnIcon.classList.remove('hidden'); volumeOffIcon.classList.add('hidden');
-            } else if (newVolume == 0 && !player.isMuted()) {
-                player.mute();
-                volumeOnIcon.classList.add('hidden'); volumeOffIcon.classList.remove('hidden');
-            }
+            if (newVolume > 0 && player.isMuted()) { player.unMute(); volumeOnIcon.classList.remove('hidden'); volumeOffIcon.classList.add('hidden');
+            } else if (newVolume == 0 && !player.isMuted()) { player.mute(); volumeOnIcon.classList.add('hidden'); volumeOffIcon.classList.remove('hidden'); }
         });
     }
 }
