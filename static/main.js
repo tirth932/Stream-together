@@ -44,37 +44,20 @@ let isResyncing = false;
 
 // --- Helper Functions ---
 function isNameValid(name) {
-    if (!name || name.trim().length === 0) {
-        alert("Name cannot be empty.");
-        return false;
-    }
-    if (name.length < 2 || name.length > 20) {
-        alert("Name must be between 2 and 20 characters.");
-        return false;
-    }
-    if (name.trim().toLowerCase() === 'admin') {
-        alert("That name is reserved.");
-        return false;
-    }
+    if (!name || name.trim().length === 0) { alert("Name cannot be empty."); return false; }
+    if (name.length < 2 || name.length > 20) { alert("Name must be between 2 and 20 characters."); return false; }
+    if (name.trim().toLowerCase() === 'admin') { alert("That name is reserved."); return false; }
     return true;
 }
 
 function getIdentity() {
-    if (IS_ADMIN_FLAG) {
-        NICKNAME = 'Admin';
-        CLIENT_ID = 'admin-client';
-        return;
-    }
+    if (IS_ADMIN_FLAG) { NICKNAME = 'Admin'; CLIENT_ID = 'admin-client'; return; }
     let name = '';
     let isValid = false;
     while (!isValid) {
         name = prompt("Please enter your name to join the room:", "");
-        if (name === null) {
-            name = `Guest-${Math.random().toString(36).substring(2, 6)}`;
-            isValid = true;
-        } else if (isNameValid(name)) {
-            isValid = true;
-        }
+        if (name === null) { name = `Guest-${Math.random().toString(36).substring(2, 6)}`; isValid = true;
+        } else if (isNameValid(name)) { isValid = true; }
     }
     NICKNAME = name.trim();
     CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
@@ -87,21 +70,30 @@ async function main() {
     ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: CLIENT_ID });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
 
+    // --- MODIFIED: Improved Refresh Logic ---
     try {
         await channel.attach();
-        const history = await channel.history({ limit: 10, direction: 'backwards' });
-        const lastNowPlayingMsg = history.items.find(msg => msg.name === 'now-playing-updated');
-        const lastQueueMsg = history.items.find(msg => msg.name === 'queue-updated');
-        if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
-        if (lastNowPlayingMsg) {
-            handleNowPlayingUpdated(lastNowPlayingMsg.data);
-            if (nowPlayingItem) {
-                if (isYouTubeApiReady) {
-                    createPlayer(nowPlayingItem.videoId);
-                } else {
-                    window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(nowPlayingItem.videoId); };
-                }
+        // Look for the last single 'update-room-state' message
+        const history = await channel.history({ limit: 1, direction: 'backwards' });
+
+        if (history.items.length > 0 && history.items[0].name === 'update-room-state') {
+            const roomState = history.items[0].data;
+            handleQueueUpdated({ queue: roomState.videoQueue || [] });
+            handleNowPlayingUpdated({ item: roomState.nowPlayingItem || null });
+
+            if (IS_ADMIN_FLAG && nowPlayingItem) {
+                const savedTime = roomState.currentTime || 0;
+                // We have a saved state. Load the player and seek to the saved time.
+                const createAndSeekPlayer = () => {
+                    createPlayer(nowPlayingItem.videoId, (event) => {
+                        event.target.seekTo(savedTime, true);
+                        event.target.playVideo();
+                    });
+                };
+                if (isYouTubeApiReady) createAndSeekPlayer();
+                else window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createAndSeekPlayer(); };
             }
+            console.log(`✅ Room state restored from history.`);
         }
     } catch (err) { console.error("Could not retrieve channel history:", err); }
 
@@ -109,12 +101,27 @@ async function main() {
     channel.subscribe(handleAblyMessages);
     channel.presence.subscribe(['enter', 'leave', 'update'], updateParticipantList);
     updateParticipantList();
-    if (!IS_ADMIN_FLAG) {
+
+    if (IS_ADMIN_FLAG) {
+        // --- NEW: Admin periodically saves the room state ---
+        setInterval(() => {
+            if (player && nowPlayingItem && player.getPlayerState() === YT.PlayerState.PLAYING) {
+                const roomState = {
+                    nowPlayingItem: nowPlayingItem,
+                    videoQueue: videoQueue,
+                    currentTime: player.getCurrentTime()
+                };
+                // Publish with no echo so the admin doesn't receive their own message
+                channel.publish({ name: 'update-room-state', data: roomState, extras: { "noecho": true } });
+            }
+        }, 10000); // Save state every 10 seconds
+    } else {
         if (waitingOverlay) waitingOverlay.style.display = 'flex';
         requestToJoinWithRetry();
     }
     window.addEventListener('beforeunload', () => { if (channel) channel.presence.leave(); });
 }
+
 
 // --- Ably Message Handler ---
 function handleAblyMessages(message) {
@@ -277,11 +284,8 @@ function handleSync(data) {
         isEventFromAbly = true;
         if (data.videoId) {
             isResyncing = true;
-            if (player.getVideoData().video_id === data.videoId) {
-                player.seekTo(data.currentTime, true);
-            } else {
-                player.loadVideoById(data.videoId, data.currentTime);
-            }
+            if (player.getVideoData().video_id === data.videoId) { player.seekTo(data.currentTime, true);
+            } else { player.loadVideoById(data.videoId, data.currentTime); }
             if (data.state === YT.PlayerState.PLAYING) player.playVideo(); else player.pauseVideo();
         }
     };
@@ -322,26 +326,19 @@ tag.src = "https://www.youtube.com/iframe_api";
 const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 function onYouTubeIframeAPIReady() { isYouTubeApiReady = true; }
+
 function createPlayer(videoId, onReadyCallback) {
-    if (player) { if (player.getVideoData().video_id !== videoId) player.loadVideoById(videoId); if (onReadyCallback) onReadyCallback(); return; }
+    if (player) { if (player.getVideoData().video_id !== videoId) player.loadVideoById(videoId); if (onReadyCallback) onReadyCallback({ target: player }); return; }
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
         playerVars: { playsinline: 1, autoplay: 0, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin },
-        events: { 'onReady': (event) => { 
-            if (IS_ADMIN_FLAG && nowPlayingItem) {
-                event.target.playVideo();
-            }
-            if (onReadyCallback) onReadyCallback(event);
-        }, 'onStateChange': onPlayerStateChange }
+        events: { 'onReady': onReadyCallback, 'onStateChange': onPlayerStateChange }
     });
 }
 function onPlayerStateChange(event) {
     if (isEventFromAbly) { isEventFromAbly = false; return; }
     if (isResyncing && event.data === YT.PlayerState.PLAYING) { isResyncing = false; return; }
-    if (!IS_ADMIN_FLAG) {
-        // Local pause/play is now allowed. They must use the explicit "Sync with Room" button to resync.
-        return;
-    }
+    if (!IS_ADMIN_FLAG) { return; }
     if (event.data === lastPlayerState) return;
     lastPlayerState = event.data;
     switch (event.data) {
@@ -351,10 +348,9 @@ function onPlayerStateChange(event) {
     }
 }
 
-// --- CRITICAL FIX: Corrected the typo and added support for Shorts URLs ---
 function extractVideoID(url) {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp);
+    const match = url.match(regExp); 
     return (match && match[2].length === 11) ? match[2] : null;
 }
 
