@@ -21,7 +21,7 @@ const muteBtn = document.getElementById('mute-btn');
 const volumeSlider = document.getElementById('volume-slider');
 const volumeOnIcon = document.getElementById('volume-on-icon');
 const volumeOffIcon = document.getElementById('volume-off-icon');
-// --- NEW: Room Control Buttons ---
+// Room Control Buttons
 const leaveRoomBtn = document.getElementById('leave-room-btn');
 const changeNameBtn = document.getElementById('change-name-btn');
 const endRoomBtn = document.getElementById('end-room-btn');
@@ -53,11 +53,32 @@ async function main() {
     NICKNAME = getUserNickname();
     ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: NICKNAME });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
-    await channel.presence.enter({ nickname: NICKNAME }); // --- MODIFIED: Enter with presence data ---
+
+    // --- NEW: Restore state from history BEFORE subscribing ---
+    try {
+        await channel.attach(); // Ensure channel is attached
+        const history = await channel.history({ limit: 10, direction: 'backwards' });
+        
+        const lastNowPlayingMsg = history.items.find(msg => msg.name === 'now-playing-updated');
+        const lastQueueMsg = history.items.find(msg => msg.name === 'queue-updated');
+
+        if (lastNowPlayingMsg) handleNowPlayingUpdated(lastNowPlayingMsg.data);
+        if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
+        
+        console.log("✅ Room state restored from history.");
+
+    } catch (err) {
+        console.error("Could not retrieve channel history:", err);
+    }
+
+    // --- Continue with normal setup ---
+    await channel.presence.enter({ nickname: NICKNAME });
     channel.subscribe(handleAblyMessages);
-    channel.presence.subscribe(['enter', 'leave', 'update'], updateParticipantList); // --- MODIFIED: Listen for 'update' ---
+    channel.presence.subscribe(['enter', 'leave', 'update'], updateParticipantList);
     updateParticipantList();
-    if (!IS_ADMIN_FLAG) { channel.publish('request-join', { nickname: NICKNAME }); }
+    if (!IS_ADMIN_FLAG && !nowPlayingItem) { // Only request join if state wasn't restored
+        channel.publish('request-join', { nickname: NICKNAME });
+    }
     window.addEventListener('beforeunload', () => { if (channel) channel.presence.leave(); });
 }
 
@@ -76,7 +97,7 @@ function handleAblyMessages(message) {
         case 'add-to-queue': if (IS_ADMIN_FLAG) handleAddToQueue(message.data); break;
         case 'queue-updated': handleQueueUpdated(message.data); break;
         case 'now-playing-updated': handleNowPlayingUpdated(message.data); break;
-        case 'room-ended': handleRoomEnded(message.data); break; // --- NEW ---
+        case 'room-ended': handleRoomEnded(message.data); break;
     }
 }
 
@@ -123,7 +144,11 @@ function handleAddToQueue(newItem) {
     }
 }
 function handleQueueUpdated({ queue }) { videoQueue = queue; renderQueue(); }
-function handleNowPlayingUpdated({ item }) { nowPlayingItem = item; renderNowPlaying(); updateBackgroundColor(item ? item.thumbnail : null); }
+function handleNowPlayingUpdated({ item }) {
+    nowPlayingItem = item;
+    renderNowPlaying();
+    updateBackgroundColor(item ? item.thumbnail : null);
+}
 function renderQueue() {
     if (!queueListContainer) return;
     queueListContainer.innerHTML = '';
@@ -138,7 +163,8 @@ function renderQueue() {
 function renderNowPlaying() {
     if (!nowPlayingCard) return;
     if (!nowPlayingItem) {
-        nowPlayingCard.innerHTML = `<p class="text-gray-400 text-sm italic">Nothing is currently playing.</p>`; return;
+        nowPlayingCard.innerHTML = `<p class="text-gray-400 text-sm italic">Nothing is currently playing.</p>`;
+        return;
     }
     nowPlayingCard.innerHTML = `<div class="flex items-center gap-3 bg-green-900/30 p-2 rounded-md border border-green-500"><img src="${nowPlayingItem.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm"><p class="font-semibold text-gray-100 truncate">${nowPlayingItem.title}</p><p class="text-green-300">Added by: ${nowPlayingItem.addedBy}</p></div></div>`;
 }
@@ -173,7 +199,6 @@ async function updateParticipantList() {
     participantCount.textContent = members.length;
     userListContainer.innerHTML = '';
     members.forEach(member => {
-        // --- MODIFIED: Use presence data for nickname ---
         const displayName = member.data.nickname || member.clientId; 
         const isAdmin = displayName.toLowerCase() === 'admin';
         const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" class="kick-btn bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1 px-2 rounded">Kick</button>` : '';
@@ -211,7 +236,6 @@ function handleKick() {
     ably.close();
     window.location.href = '/';
 }
-// --- NEW ---
 function handleRoomEnded(data) {
     alert(data.message);
     ably.close();
@@ -269,37 +293,28 @@ function extractVideoID(url) {
 
 // --- Event Listeners ---
 addToQueueBtn.addEventListener('click', addVideoToQueue);
-
 if (IS_ADMIN_FLAG) {
     userListContainer.addEventListener('click', (e) => {
         const kickBtn = e.target.closest('.kick-btn');
         if (kickBtn) { const clientIdToKick = kickBtn.dataset.kickId; if (clientIdToKick) kickUser(clientIdToKick); }
     });
-    // --- NEW ---
     endRoomBtn.addEventListener('click', () => {
         if (confirm("Are you sure you want to end the session for everyone?")) {
             channel.publish('room-ended', { message: 'The admin has ended the session.' });
-            setTimeout(() => {
-                ably.close();
-                window.location.href = '/';
-            }, 500);
+            setTimeout(() => { ably.close(); window.location.href = '/'; }, 500);
         }
     });
 } else {
-    // --- NEW: Viewer Button Logic ---
-    leaveRoomBtn.addEventListener('click', () => {
-        ably.close();
-        window.location.href = '/';
-    });
+    leaveRoomBtn.addEventListener('click', () => { ably.close(); window.location.href = '/'; });
     changeNameBtn.addEventListener('click', async () => {
         const newName = prompt("Enter your new name:", NICKNAME);
         if (newName && newName.trim() !== '') {
+            const oldName = NICKNAME;
             NICKNAME = newName.trim();
             await channel.presence.update({ nickname: NICKNAME });
-            displayChatMessage('System', `You are now known as ${NICKNAME}`, true);
+            displayChatMessage('System', `"${oldName}" is now known as "${NICKNAME}"`, true);
         }
     });
-    // Viewer-Specific Control Logic
     if (fullscreenBtn && playerWrapper) { fullscreenBtn.addEventListener('click', () => { if (playerWrapper.requestFullscreen) { playerWrapper.requestFullscreen(); } else if (playerWrapper.webkitRequestFullscreen) { playerWrapper.webkitRequestFullscreen(); } }); }
     if (muteBtn && volumeSlider && volumeOnIcon && volumeOffIcon) {
         muteBtn.addEventListener('click', () => {
