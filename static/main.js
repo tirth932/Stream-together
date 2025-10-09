@@ -12,7 +12,7 @@ const userListContainer = document.getElementById('user-list');
 const participantCount = document.getElementById('participant-count');
 const queueListContainer = document.getElementById('queue-list');
 const nowPlayingCard = document.getElementById('now-playing-card');
-const dynamicBackground = document.getElementById('dynamic-background'); // --- NEW ---
+const dynamicBackground = document.getElementById('dynamic-background');
 const waitingOverlay = document.getElementById('waiting-overlay');
 const playerWrapper = document.getElementById('player-wrapper');
 // Viewer-specific controls
@@ -32,7 +32,7 @@ let NICKNAME;
 let lastVolume = 100;
 let videoQueue = [];
 let nowPlayingItem = null;
-const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)'; // --- NEW ---
+const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)';
 
 // --- Helper Functions ---
 function getUserNickname() {
@@ -74,42 +74,22 @@ function handleAblyMessages(message) {
     }
 }
 
-// --- NEW: Background Sync Logic ---
+// --- Background Sync Logic ---
 function updateBackgroundColor(imageUrl) {
-    if (!imageUrl || typeof ColorThief === 'undefined') {
-        dynamicBackground.style.backgroundImage = defaultBackground;
-        return;
-    }
-    
-    // Request a higher quality thumbnail for better color accuracy
+    if (!imageUrl || typeof ColorThief === 'undefined') { dynamicBackground.style.backgroundImage = defaultBackground; return; }
     const highQualityUrl = imageUrl.replace('default.jpg', 'hqdefault.jpg');
-    
     const colorThief = new ColorThief();
     const img = new Image();
-    img.crossOrigin = 'Anonymous'; // This is crucial for CORS
+    img.crossOrigin = 'Anonymous';
     img.src = highQualityUrl;
-
     img.addEventListener('load', () => {
         try {
-            const palette = colorThief.getPalette(img, 2); // Get the 2 most dominant colors
-            const color1 = palette[0];
-            const color2 = palette[1];
-            
-            // Set the new gradient
-            dynamicBackground.style.backgroundImage = `
-                radial-gradient(at 20% 20%, rgba(${color1[0]}, ${color1[1]}, ${color1[2]}, 0.3) 0px, transparent 50%),
-                radial-gradient(at 80% 80%, rgba(${color2[0]}, ${color2[1]}, ${color2[2]}, 0.25) 0px, transparent 50%)
-            `;
-        } catch(e) {
-            console.error("ColorThief error:", e);
-            dynamicBackground.style.backgroundImage = defaultBackground; // Fallback
-        }
+            const palette = colorThief.getPalette(img, 2);
+            const color1 = palette[0]; const color2 = palette[1];
+            dynamicBackground.style.backgroundImage = `radial-gradient(at 20% 20%, rgba(${color1[0]}, ${color1[1]}, ${color1[2]}, 0.3) 0px, transparent 50%), radial-gradient(at 80% 80%, rgba(${color2[0]}, ${color2[1]}, ${color2[2]}, 0.25) 0px, transparent 50%)`;
+        } catch(e) { dynamicBackground.style.backgroundImage = defaultBackground; }
     });
-
-    img.addEventListener('error', () => {
-        console.error("Could not load image for color extraction.");
-        dynamicBackground.style.backgroundImage = defaultBackground; // Fallback
-    });
+    img.addEventListener('error', () => { dynamicBackground.style.backgroundImage = defaultBackground; });
 }
 
 
@@ -128,7 +108,6 @@ async function addVideoToQueue() {
     } catch (error) { console.error("Error adding video to queue:", error); alert(error.message);
     } finally { addToQueueBtn.disabled = false; addToQueueBtn.textContent = "Add to Queue"; }
 }
-
 function handleAddToQueue(newItem) {
     if (!IS_ADMIN_FLAG) return;
     videoQueue.push(newItem);
@@ -138,15 +117,12 @@ function handleAddToQueue(newItem) {
         channel.publish('queue-updated', { queue: videoQueue });
     }
 }
-
 function handleQueueUpdated({ queue }) { videoQueue = queue; renderQueue(); }
-
 function handleNowPlayingUpdated({ item }) {
     nowPlayingItem = item;
     renderNowPlaying();
-    updateBackgroundColor(item ? item.thumbnail : null); // --- MODIFIED ---
+    updateBackgroundColor(item ? item.thumbnail : null);
 }
-
 function renderQueue() {
     if (!queueListContainer) return;
     queueListContainer.innerHTML = '';
@@ -158,7 +134,6 @@ function renderQueue() {
         queueListContainer.appendChild(queueEl);
     });
 }
-
 function renderNowPlaying() {
     if (!nowPlayingCard) return;
     if (!nowPlayingItem) {
@@ -167,7 +142,6 @@ function renderNowPlaying() {
     }
     nowPlayingCard.innerHTML = `<div class="flex items-center gap-3 bg-green-900/30 p-2 rounded-md border border-green-500"><img src="${nowPlayingItem.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm"><p class="font-semibold text-gray-100 truncate">${nowPlayingItem.title}</p><p class="text-green-300">Added by: ${nowPlayingItem.addedBy}</p></div></div>`;
 }
-
 function playNextInQueue() {
     if (!IS_ADMIN_FLAG) return;
     if (videoQueue.length === 0) {
@@ -221,10 +195,23 @@ function handleSyncRequest(data) {
     const syncData = { videoId: currentVideoId, currentTime: player.getCurrentTime(), state: player.getPlayerState(), targetNickname: data.requesterNickname, nowPlaying: nowPlayingItem, queue: videoQueue };
     channel.publish('sync-response', syncData);
 }
+// --- MODIFIED: This function is now more robust for re-syncing ---
 function handleSync(data) {
-    handleNowPlayingUpdated({ item: data.nowPlaying });
-    handleQueueUpdated({ queue: data.queue });
-    const applyVideoSync = () => { isEventFromAbly = true; if(data.videoId) { player.loadVideoById(data.videoId, data.currentTime); }};
+    if(data.nowPlaying) handleNowPlayingUpdated({ item: data.nowPlaying });
+    if(data.queue) handleQueueUpdated({ queue: data.queue });
+
+    const applyVideoSync = () => {
+        isEventFromAbly = true;
+        if(data.videoId) {
+            player.seekTo(data.currentTime, true);
+            // Only play if the admin's player is also playing
+            if (data.state === YT.PlayerState.PLAYING) {
+                player.playVideo();
+            } else {
+                player.pauseVideo();
+            }
+        }
+    };
     if (!isYouTubeApiReady) { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(data.videoId, applyVideoSync); };
     } else if (!player) { createPlayer(data.videoId, applyVideoSync);
     } else { applyVideoSync(); }
@@ -264,10 +251,22 @@ function createPlayer(videoId, onReadyCallback) {
         events: { 'onReady': (event) => { if (onReadyCallback) onReadyCallback(event); }, 'onStateChange': onPlayerStateChange }
     });
 }
+// --- MODIFIED: The core logic for the new feature is here ---
 function onPlayerStateChange(event) {
     if (isEventFromAbly) { isEventFromAbly = false; return; }
-    if (!IS_ADMIN_FLAG && event.data === YT.PlayerState.PAUSED) { player.playVideo(); return; }
-    if (!IS_ADMIN_FLAG) return;
+
+    // --- NEW: Viewer pause/resume logic ---
+    if (!IS_ADMIN_FLAG) {
+        // If viewer presses play, don't play locally. Instead, request a sync.
+        if (event.data === YT.PlayerState.PLAYING) {
+            player.pauseVideo(); // Immediately pause to prevent playing at the wrong time
+            displayChatMessage('System', 'Re-syncing with the room...', true);
+            channel.publish('sync-request', { requesterNickname: NICKNAME });
+        }
+        return; // Viewers do not broadcast any state changes
+    }
+    
+    // --- Admin state change logic (unchanged) ---
     if (event.data === lastPlayerState) return;
     lastPlayerState = event.data;
     switch (event.data) {
@@ -279,13 +278,12 @@ function onPlayerStateChange(event) {
 
 function extractVideoID(url) {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp);
+    const match = url.match(reg.Exp);
     return (match && match[2].length === 11) ? match[2] : null;
 }
 
 // --- Event Listeners ---
 addToQueueBtn.addEventListener('click', addVideoToQueue);
-
 if (IS_ADMIN_FLAG) {
     userListContainer.addEventListener('click', (e) => {
         const kickBtn = e.target.closest('.kick-btn');
