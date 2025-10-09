@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Together - Watch YouTube in Sync</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Roboto:wght@300;400&display=swap" rel="stylesheet">
+    <style>
+        :root { --glow-color: rgb(168, 85, 247); }
+        body {
+            background-color: #0c0a09;
+            background-image:
+                radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.15) 0px, transparent 50%),
+                radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.15) 0px, transparent 50%),
+                radial-gradient(at 50% 80%, hsla(333, 91%, 60%, 0.2) 0px, transparent 50%);
+        }
+        .header-title {
+            font-family: 'Orbitron', sans-serif;
+            animation: glow 2s ease-in-out infinite alternate;
+        }
+        @keyframes glow {
+            from { text-shadow: 0 0 15px #fff, 0 0 25px var(--glow-color); }
+            to { text-shadow: 0 0 25px #fff, 0 0 40px var(--glow-color), 0 0 50px var(--glow-color); }
+        }
+        .feature-card {
+            background: rgba(17, 24, 39, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .feature-card:hover {
+            transform: translateY(-10px) scale(1.03);
+            box-shadow: 0 0 30px rgba(168, 85, 247, 0.4);
+        }
+        .action-button {
+            transition: all 0.2s ease-out;
+            box-shadow: 0 5px 15px rgba(168, 85, 247, 0.3);
+        }
+        .action-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(168, 85, 247, 0.5);
+        }
+    </style>
+</head>
+<body class="text-white font-sans">
+    <div class="min-h-screen flex flex-col items-center justify-center p-4">
+        <main class="w-full max-w-5xl text-center space-y-12">
+            <header class="space-y-4">
+                <h1 class="header-title text-5xl md:text-8xl font-black tracking-wider">
+                    Stream Together
+                </h1>
+                <p class="text-xl text-gray-300 max-w-2xl mx-auto">
+                    Create private viewing rooms, sync YouTube videos with friends, and chat in real-time. Your shared screen, perfectly in sync, controlled by you.
+                </p>
+            </header>
+
+            <section class="grid md:grid-cols-3 gap-8 text-left">
+                <div class="feature-card p-6 rounded-2xl">
+                    <h3 class="text-2xl font-bold mb-3 font-orbitron">Synced Playback</h3>
+                    <p class="text-gray-400">Experience flawless, real-time synchronization. When the admin plays, pauses, or seeks, everyone's video reacts instantly. No more "3, 2, 1, go!"</p>
+                </div>
+                <div class="feature-card p-6 rounded-2xl">
+                    <h3 class="text-2xl font-bold mb-3 font-orbitron">Admin Control</h3>
+                    <p class="text-gray-400">Full control rests with the room's creator. Manage the playlist, approve new members into your private room, and ensure a smooth viewing session for all.</p>
+                </div>
+                <div class="feature-card p-6 rounded-2xl">
+                    <h3 class="text-2xl font-bold mb-3 font-orbitron">Live Chat</h3>
+                    <p class="text-gray-400">Share your reactions and discuss what you're watching with an integrated live chat. Every message is instantly delivered to all members of the room.</p>
+                </div>
+            </section>
+
+            <section class="bg-gray-900/50 p-8 rounded-2xl border border-gray-700">
+                <h2 class="text-3xl font-bold mb-6">Create or Join a Room</h2>
+                <form id="join-form" class="flex flex-col md:flex-row gap-4 max-w-lg mx-auto">
+                    <input type="text" id="room-id" class="flex-grow bg-gray-800 border-2 border-gray-600 focus:border-purple-500 rounded-lg p-3 outline-none transition text-center" placeholder="Enter a Room ID..." required>
+                    <button type="submit" class="action-button bg-purple-600 hover:bg-purple-700 font-bold py-3 px-8 rounded-lg">Join Now</button>
+                </form>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        document.getElementById('join-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const roomId = document.getElementById('room-id').value.trim();
+            if (roomId) {
+                // Sanitize room ID for URL
+                const sanitizedRoomId = roomId.replace(/[^a-zA-Z0-9-]/g, '-');
+                window.location.href = `/${sanitizedRoomId}`;
+            }
+        });
+    </script>
+</body>
+</html>
