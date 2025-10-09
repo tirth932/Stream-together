@@ -1,6 +1,6 @@
+const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 const ROOM_ID = document.location.pathname.split('/').pop();
 const IS_ADMIN = document.getElementById('admin-controls') !== null;
-const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 
 // --- DOM Elements ---
 const urlInput = document.getElementById('youtube-url');
@@ -10,6 +10,8 @@ const sendChatBtn = document.getElementById('send-chat-btn');
 const chatMessagesContainer = document.getElementById('chat-messages');
 const userListContainer = document.getElementById('user-list');
 const waitingOverlay = document.getElementById('waiting-overlay');
+const fullscreenBtn = document.getElementById('fullscreen-btn'); // Get the new button
+const playerWrapper = document.getElementById('player-wrapper'); // Get the player's container
 
 // --- State ---
 let player;
@@ -56,7 +58,6 @@ async function main() {
         channel.publish('request-join', { nickname: NICKNAME });
     }
     
-    // --- FIX 3: Add event listener for tab close ---
     window.addEventListener('beforeunload', () => {
         if (channel) {
             channel.presence.leave();
@@ -154,13 +155,10 @@ function handleSyncRequest(data) {
     channel.publish('sync-response', syncData);
 }
 
-// --- FIX 1: Overhauled handleSync for reliability ---
 function handleSync(data) {
-    console.log("Applying sync data:", data);
     const applySyncData = () => {
         isEventFromAbly = true;
         player.loadVideoById(data.videoId, data.currentTime);
-        // We now use the onStateChange event to play after loading.
     };
 
     if (!isYouTubeApiReady) {
@@ -251,16 +249,12 @@ function createPlayer(videoId, onReadyCallback) {
 function onPlayerStateChange(event) {
     if (isEventFromAbly) {
         isEventFromAbly = false;
-        // --- FIX 1 (Part 2): Auto-play after a sync-load ---
-        // When loadVideoById finishes, it enters BUFFERING then PLAYING state.
-        // We use this to reliably start playback for sync receivers.
         if(event.data === YT.PlayerState.PLAYING) {
              console.log("Playback started by Ably event.");
         }
         return;
     }
     
-    // --- FIX 2: Prevent users from pausing the video ---
     if (!IS_ADMIN && event.data === YT.PlayerState.PAUSED) {
         player.playVideo();
         return;
@@ -307,5 +301,20 @@ sendChatBtn.addEventListener('click', sendChatMessage);
 chatInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendChatMessage();
 });
+
+// --- NEW: Event Listener for Custom Fullscreen Button ---
+if (fullscreenBtn && playerWrapper) {
+    fullscreenBtn.addEventListener('click', () => {
+        if (playerWrapper.requestFullscreen) {
+            playerWrapper.requestFullscreen();
+        } else if (playerWrapper.mozRequestFullScreen) { // Firefox
+            playerWrapper.mozRequestFullScreen();
+        } else if (playerWrapper.webkitRequestFullscreen) { // Chrome, Safari, Opera
+            playerWrapper.webkitRequestFullscreen();
+        } else if (playerWrapper.msRequestFullscreen) { // IE/Edge
+            playerWrapper.msRequestFullscreen();
+        }
+    });
+}
 
 main();

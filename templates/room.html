@@ -16,7 +16,6 @@
         #player { border-radius: 1rem; box-shadow: 0px 30px 60px -15px rgba(0, 0, 0, 0.8), inset 0 0 15px rgba(168, 85, 247, 0.2); }
         .input-field:focus { box-shadow: 0 0 15px 2px rgba(168, 85, 247, 0.5), inset 0 2px 4px 0 rgba(0,0,0,0.5); border-color: var(--glow-color) !important; }
         .action-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(168, 85, 247, 0.4); }
-        /* Custom scrollbar for chat */
         #chat-messages::-webkit-scrollbar { width: 8px; }
         #chat-messages::-webkit-scrollbar-track { background: #1f2937; border-radius: 10px;}
         #chat-messages::-webkit-scrollbar-thumb { background: var(--glow-color); border-radius: 10px; }
@@ -44,8 +43,16 @@
                 <p class="text-md text-gray-400">{% if is_admin %}You are the <span class="text-purple-400 font-bold">Admin</span>.{% else %}You are a <span class="text-blue-400 font-bold">Viewer</span>.{% endif %}</p>
             </header>
 
-            <div class="aspect-video w-full bg-black rounded-lg overflow-hidden">
+            <div id="player-wrapper" class="aspect-video w-full bg-black rounded-lg overflow-hidden relative">
                 <div id="player" class="w-full h-full"></div>
+
+                {% if not is_admin %}
+                <button id="fullscreen-btn" title="Toggle Fullscreen" class="absolute top-2 right-2 z-20 p-2 bg-black bg-opacity-40 rounded-full hover:bg-opacity-75 transition-opacity opacity-60 hover:opacity-100">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-white">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m4.5 11.25h-4.5m4.5 0v-4.5m0 0L15 15" />
+                    </svg>
+                </button>
+                {% endif %}
             </div>
 
             {% if is_admin %}
