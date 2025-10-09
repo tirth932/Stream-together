@@ -38,7 +38,7 @@ let ably, channel;
 async function main() {
     NICKNAME = getUserNickname();
     
-    ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: NICKNAME });
+    ably = new Ably.Realtime.Promise({ key: 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA', clientId: NICKNAME });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
     
     console.log(`Welcome! You are ${IS_ADMIN ? 'an Admin' : 'a User'}. Nickname: ${NICKNAME}`);
