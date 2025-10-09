@@ -1,3 +1,4 @@
+// stream-together-client.js
 const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 const ROOM_ID = document.location.pathname.split('/').pop();
 const IS_ADMIN_FLAG = window.location.pathname.startsWith('/admin/');
@@ -41,23 +42,41 @@ let videoQueue = [];
 let nowPlayingItem = null;
 const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)';
 let isResyncing = false;
+let lastKnownTime = 0; // <-- where we will resume from (seconds)
 
 // --- Helper Functions ---
 function isNameValid(name) {
-    if (!name || name.trim().length === 0) { alert("Name cannot be empty."); return false; }
-    if (name.length < 2 || name.length > 20) { alert("Name must be between 2 and 20 characters."); return false; }
-    if (name.trim().toLowerCase() === 'admin') { alert("That name is reserved."); return false; }
+    if (!name || name.trim().length === 0) {
+        alert("Name cannot be empty.");
+        return false;
+    }
+    if (name.length < 2 || name.length > 20) {
+        alert("Name must be between 2 and 20 characters.");
+        return false;
+    }
+    if (name.trim().toLowerCase() === 'admin') {
+        alert("That name is reserved.");
+        return false;
+    }
     return true;
 }
 
 function getIdentity() {
-    if (IS_ADMIN_FLAG) { NICKNAME = 'Admin'; CLIENT_ID = 'admin-client'; return; }
+    if (IS_ADMIN_FLAG) {
+        NICKNAME = 'Admin';
+        CLIENT_ID = 'admin-client';
+        return;
+    }
     let name = '';
     let isValid = false;
     while (!isValid) {
         name = prompt("Please enter your name to join the room:", "");
-        if (name === null) { name = `Guest-${Math.random().toString(36).substring(2, 6)}`; isValid = true;
-        } else if (isNameValid(name)) { isValid = true; }
+        if (name === null) {
+            name = `Guest-${Math.random().toString(36).substring(2, 6)}`;
+            isValid = true;
+        } else if (isNameValid(name)) {
+            isValid = true;
+        }
     }
     NICKNAME = name.trim();
     CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
@@ -67,33 +86,63 @@ function getIdentity() {
 let ably, channel;
 async function main() {
     getIdentity();
+    // Try restoring last state from localStorage (optional)
+    try {
+        const saved = localStorage.getItem(`lastVideoState_${ROOM_ID}`);
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.videoId) {
+                currentVideoId = parsed.videoId;
+                lastKnownTime = parsed.time || 0;
+            }
+        }
+    } catch (e) {
+        console.warn("Could not parse saved state:", e);
+    }
+
     ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: CLIENT_ID });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
 
-    // --- MODIFIED: Improved Refresh Logic ---
     try {
         await channel.attach();
-        // Look for the last single 'update-room-state' message
-        const history = await channel.history({ limit: 1, direction: 'backwards' });
-
-        if (history.items.length > 0 && history.items[0].name === 'update-room-state') {
-            const roomState = history.items[0].data;
-            handleQueueUpdated({ queue: roomState.videoQueue || [] });
-            handleNowPlayingUpdated({ item: roomState.nowPlayingItem || null });
-
-            if (IS_ADMIN_FLAG && nowPlayingItem) {
-                const savedTime = roomState.currentTime || 0;
-                // We have a saved state. Load the player and seek to the saved time.
-                const createAndSeekPlayer = () => {
-                    createPlayer(nowPlayingItem.videoId, (event) => {
-                        event.target.seekTo(savedTime, true);
-                        event.target.playVideo();
-                    });
-                };
-                if (isYouTubeApiReady) createAndSeekPlayer();
-                else window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createAndSeekPlayer(); };
+        const history = await channel.history({ limit: 50, direction: 'backwards' }); // fetch recent events
+        // get most recent now-playing, queue, and time-update if present
+        const lastNowPlayingMsg = history.items.slice().reverse().find(msg => msg.name === 'now-playing-updated');
+        const lastQueueMsg = history.items.slice().reverse().find(msg => msg.name === 'queue-updated');
+        // time-update messages may be many; pick the most recent for the current video
+        const timeUpdateMsgs = history.items.slice().reverse().filter(msg => msg.name === 'time-update');
+        let lastTimeForVideo = null;
+        if (timeUpdateMsgs.length > 0) {
+            // Prefer the most recent time-update where videoId matches currentVideoId (if known)
+            if (currentVideoId) {
+                lastTimeForVideo = timeUpdateMsgs.find(m => m.data && m.data.videoId === currentVideoId);
             }
-            console.log(`✅ Room state restored from history.`);
+            // otherwise pick the most recent time-update overall
+            if (!lastTimeForVideo) lastTimeForVideo = timeUpdateMsgs[0];
+        }
+
+        if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
+        if (lastNowPlayingMsg) {
+            handleNowPlayingUpdated(lastNowPlayingMsg.data);
+            // if time-update exists for that video, use it
+            if (lastTimeForVideo && lastTimeForVideo.data) {
+                lastKnownTime = lastTimeForVideo.data.currentTime || lastKnownTime;
+            }
+            // create player if nowPlaying exists
+            if (nowPlayingItem) {
+                if (isYouTubeApiReady) {
+                    createPlayer(nowPlayingItem.videoId);
+                } else {
+                    window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(nowPlayingItem.videoId); };
+                }
+            }
+        } else if (currentVideoId) {
+            // If localStorage provided a currentVideoId but history had no now-playing, still create player
+            if (isYouTubeApiReady) {
+                createPlayer(currentVideoId);
+            } else {
+                window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(currentVideoId); };
+            }
         }
     } catch (err) { console.error("Could not retrieve channel history:", err); }
 
@@ -101,27 +150,15 @@ async function main() {
     channel.subscribe(handleAblyMessages);
     channel.presence.subscribe(['enter', 'leave', 'update'], updateParticipantList);
     updateParticipantList();
-
-    if (IS_ADMIN_FLAG) {
-        // --- NEW: Admin periodically saves the room state ---
-        setInterval(() => {
-            if (player && nowPlayingItem && player.getPlayerState() === YT.PlayerState.PLAYING) {
-                const roomState = {
-                    nowPlayingItem: nowPlayingItem,
-                    videoQueue: videoQueue,
-                    currentTime: player.getCurrentTime()
-                };
-                // Publish with no echo so the admin doesn't receive their own message
-                channel.publish({ name: 'update-room-state', data: roomState, extras: { "noecho": true } });
-            }
-        }, 10000); // Save state every 10 seconds
-    } else {
+    if (!IS_ADMIN_FLAG) {
         if (waitingOverlay) waitingOverlay.style.display = 'flex';
         requestToJoinWithRetry();
     }
     window.addEventListener('beforeunload', () => { if (channel) channel.presence.leave(); });
-}
 
+    // Admin: start periodic time broadcasts
+    startAdminTimeBroadcast();
+}
 
 // --- Ably Message Handler ---
 function handleAblyMessages(message) {
@@ -140,12 +177,22 @@ function handleAblyMessages(message) {
         case 'now-playing-updated': handleNowPlayingUpdated(message.data); break;
         case 'room-ended': handleRoomEnded(message.data); break;
         case 'promote-to-admin': handlePromotion(message.data); break;
+        case 'time-update':
+            // update lastKnownTime when receiving admin time updates for the current video
+            if (message.data && message.data.videoId) {
+                // if we don't have a currentVideoId yet, accept it
+                if (!currentVideoId) currentVideoId = message.data.videoId;
+                if (message.data.videoId === currentVideoId) {
+                    lastKnownTime = message.data.currentTime || 0;
+                }
+            }
+            break;
     }
 }
 
 // --- Background Sync Logic ---
 function updateBackgroundColor(imageUrl) {
-    if (!imageUrl || typeof ColorThief === 'undefined') { dynamicBackground.style.backgroundImage = defaultBackground; return; }
+    if (!imageUrl || typeof ColorThief === 'undefined') { if(dynamicBackground) dynamicBackground.style.backgroundImage = defaultBackground; return; }
     const highQualityUrl = imageUrl.replace('default.jpg', 'hqdefault.jpg');
     const colorThief = new ColorThief();
     const img = new Image();
@@ -186,6 +233,7 @@ function handleAddToQueue(newItem) {
 function handleQueueUpdated({ queue }) { videoQueue = queue; renderQueue(); }
 function handleNowPlayingUpdated({ item }) {
     nowPlayingItem = item;
+    if (item && item.videoId) currentVideoId = item.videoId;
     renderNowPlaying();
     updateBackgroundColor(item ? item.thumbnail : null);
 }
@@ -284,8 +332,12 @@ function handleSync(data) {
         isEventFromAbly = true;
         if (data.videoId) {
             isResyncing = true;
-            if (player.getVideoData().video_id === data.videoId) { player.seekTo(data.currentTime, true);
-            } else { player.loadVideoById(data.videoId, data.currentTime); }
+            lastKnownTime = data.currentTime || 0; // <-- store it
+            if (player.getVideoData().video_id === data.videoId) {
+                player.seekTo(data.currentTime, true);
+            } else {
+                player.loadVideoById(data.videoId, data.currentTime);
+            }
             if (data.state === YT.PlayerState.PLAYING) player.playVideo(); else player.pauseVideo();
         }
     };
@@ -314,6 +366,8 @@ function handleRoomEnded(data) { alert(data.message); ably.close(); window.locat
 // --- Real-time Video Control Handlers ---
 function handleSetVideo(data) {
     currentVideoId = data.videoId; lastPlayerState = -1;
+    // reset lastKnownTime when admin explicitly sets a new video
+    lastKnownTime = 0;
     if (player && typeof player.loadVideoById === 'function') { isEventFromAbly = true; player.loadVideoById(currentVideoId);
     } else if (isYouTubeApiReady) { createPlayer(currentVideoId); }
 }
@@ -326,31 +380,74 @@ tag.src = "https://www.youtube.com/iframe_api";
 const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 function onYouTubeIframeAPIReady() { isYouTubeApiReady = true; }
-
 function createPlayer(videoId, onReadyCallback) {
-    if (player) { if (player.getVideoData().video_id !== videoId) player.loadVideoById(videoId); if (onReadyCallback) onReadyCallback({ target: player }); return; }
+    // if existing player, try to reuse and seek/load at lastKnownTime
+    if (player) {
+        try {
+            if (player.getVideoData().video_id !== videoId) {
+                // load at lastKnownTime
+                player.loadVideoById(videoId, lastKnownTime || 0);
+            } else {
+                // same video; seek to lastKnownTime
+                player.seekTo(lastKnownTime || 0, true);
+            }
+        } catch (e) {
+            console.warn("Error reusing player, creating a new one:", e);
+            // fallthrough to create new player
+        }
+        if (onReadyCallback) onReadyCallback();
+        return;
+    }
+
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
         playerVars: { playsinline: 1, autoplay: 0, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin },
-        events: { 'onReady': onReadyCallback, 'onStateChange': onPlayerStateChange }
+        events: { 'onReady': (event) => {
+            // On ready, ensure we start at lastKnownTime if available
+            try {
+                if (lastKnownTime && lastKnownTime > 0) {
+                    // load or seek to lastKnownTime
+                    if (event.target.getVideoData().video_id === videoId) {
+                        event.target.seekTo(lastKnownTime, true);
+                    } else {
+                        event.target.loadVideoById(videoId, lastKnownTime);
+                    }
+                }
+            } catch (e) { console.warn("Error seeking on ready:", e); }
+            if (IS_ADMIN_FLAG && nowPlayingItem) {
+                // Admin should start playback (if they want)
+                event.target.playVideo();
+            }
+            if (onReadyCallback) onReadyCallback(event);
+        }, 'onStateChange': onPlayerStateChange }
     });
 }
 function onPlayerStateChange(event) {
     if (isEventFromAbly) { isEventFromAbly = false; return; }
     if (isResyncing && event.data === YT.PlayerState.PLAYING) { isResyncing = false; return; }
-    if (!IS_ADMIN_FLAG) { return; }
+    if (!IS_ADMIN_FLAG) {
+        // Local pause/play is now allowed. They must use the explicit "Sync with Room" button to resync.
+        return;
+    }
     if (event.data === lastPlayerState) return;
     lastPlayerState = event.data;
     switch (event.data) {
-        case YT.PlayerState.PLAYING: channel.publish('play', { currentTime: player.getCurrentTime() }); break;
-        case YT.PlayerState.PAUSED: channel.publish('pause', {}); break;
-        case YT.PlayerState.ENDED: playNextInQueue(); break;
+        case YT.PlayerState.PLAYING:
+            channel.publish('play', { currentTime: player.getCurrentTime() });
+            break;
+        case YT.PlayerState.PAUSED:
+            channel.publish('pause', {});
+            break;
+        case YT.PlayerState.ENDED:
+            playNextInQueue();
+            break;
     }
 }
 
+// --- CRITICAL FIX: Corrected the typo and added support for Shorts URLs ---
 function extractVideoID(url) {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp); 
+    const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
 }
 
@@ -436,4 +533,34 @@ if (IS_ADMIN_FLAG) {
 sendChatBtn.addEventListener('click', sendChatMessage);
 chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendChatMessage(); });
 
+// --- Admin periodic time broadcast and local persistence ---
+let adminBroadcastIntervalId = null;
+function startAdminTimeBroadcast() {
+    if (!IS_ADMIN_FLAG) return;
+    if (adminBroadcastIntervalId) return;
+    adminBroadcastIntervalId = setInterval(() => {
+        if (!player) return;
+        try {
+            if (player.getPlayerState() === YT.PlayerState.PLAYING) {
+                const t = player.getCurrentTime();
+                currentVideoId = player.getVideoData().video_id || currentVideoId;
+                channel.publish('time-update', { videoId: currentVideoId, currentTime: t });
+                // persist locally as a fallback
+                try {
+                    localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: currentVideoId, time: t }));
+                } catch (e) { /* ignore localStorage failures */ }
+            }
+        } catch (e) {
+            // ignore errors if player unavailable
+        }
+    }, 5000); // every 5 seconds
+}
+function stopAdminTimeBroadcast() {
+    if (adminBroadcastIntervalId) {
+        clearInterval(adminBroadcastIntervalId);
+        adminBroadcastIntervalId = null;
+    }
+}
+
+// --- Startup ---
 main();
