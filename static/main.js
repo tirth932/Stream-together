@@ -1,5 +1,6 @@
 const ROOM_ID = document.location.pathname.split('/').pop();
 const IS_ADMIN = document.getElementById('admin-controls') !== null;
+const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 
 // --- DOM Elements ---
 const urlInput = document.getElementById('youtube-url');
@@ -16,7 +17,7 @@ let isEventFromAbly = false;
 let isYouTubeApiReady = false;
 let currentVideoId = null;
 let lastPlayerState = -1;
-let NICKNAME; // Will be set after the prompt
+let NICKNAME;
 
 // --- Helper Functions ---
 function getUserNickname() {
@@ -24,7 +25,7 @@ function getUserNickname() {
     let name = '';
     while (!name || name.trim().length === 0) {
         name = prompt("Please enter your name to join the room:", "");
-        if (name === null) { // User clicked cancel
+        if (name === null) {
             name = `Guest-${Math.random().toString(36).substring(2, 6)}`;
             break;
         }
@@ -38,7 +39,7 @@ let ably, channel;
 async function main() {
     NICKNAME = getUserNickname();
     
-    ably = new Ably.Realtime.Promise({ key: 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA', clientId: NICKNAME });
+    ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: NICKNAME });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
     
     console.log(`Welcome! You are ${IS_ADMIN ? 'an Admin' : 'a User'}. Nickname: ${NICKNAME}`);
@@ -54,14 +55,20 @@ async function main() {
     } else {
         channel.publish('request-join', { nickname: NICKNAME });
     }
+    
+    // --- FIX 3: Add event listener for tab close ---
+    window.addEventListener('beforeunload', () => {
+        if (channel) {
+            channel.presence.leave();
+        }
+    });
 }
 
 // --- Ably Message Handler ---
 function handleAblyMessages(message) {
-    console.log("Received Ably message:", message.name, message.data);
+    // console.log("Received Ably message:", message.name, message.data);
 
     switch (message.name) {
-        // Video Controls
         case 'set-video':
             handleSetVideo(message.data);
             break;
@@ -71,8 +78,6 @@ function handleAblyMessages(message) {
         case 'pause':
             handlePause();
             break;
-
-        // User & Sync Management
         case 'request-join':
             if (IS_ADMIN) handleJoinRequest(message.data);
             break;
@@ -88,8 +93,6 @@ function handleAblyMessages(message) {
         case 'kick-user':
              if (message.data.kickedNickname === NICKNAME) handleKick();
             break;
-
-        // Chat
         case 'chat-message':
             displayChatMessage(message.data.nickname, message.data.text);
             break;
@@ -108,38 +111,26 @@ function sendChatMessage() {
 function displayChatMessage(nickname, text) {
     const isAdminMessage = nickname.toLowerCase() === 'admin';
     const messageEl = document.createElement('div');
-    messageEl.innerHTML = `
-        <p class="text-sm">
-            <strong class="${isAdminMessage ? 'text-purple-400' : 'text-blue-300'}">${nickname}:</strong>
-            <span class="text-gray-200">${text}</span>
-        </p>`;
+    messageEl.innerHTML = `<p class="text-sm"><strong class="${isAdminMessage ? 'text-purple-400' : 'text-blue-300'}">${nickname}:</strong> <span class="text-gray-200">${text}</span></p>`;
     chatMessagesContainer.appendChild(messageEl);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 }
 
-
 // --- Admin-Specific Logic ---
 async function updateAdminUserList() {
     if (!IS_ADMIN || !userListContainer) return;
-    
     userListContainer.innerHTML = '';
     const members = await channel.presence.get();
-    
     members.forEach(member => {
         if (member.clientId.toLowerCase() === 'admin') return;
-
         const userEl = document.createElement('div');
         userEl.className = 'flex justify-between items-center bg-gray-800 p-2 rounded';
-        userEl.innerHTML = `
-            <span class="text-gray-300">${member.clientId}</span>
-            <button data-kick-id="${member.clientId}" class="kick-btn bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1 px-2 rounded">Kick</button>
-        `;
+        userEl.innerHTML = `<span class="text-gray-300">${member.clientId}</span><button data-kick-id="${member.clientId}" class="kick-btn bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1 px-2 rounded">Kick</button>`;
         userListContainer.appendChild(userEl);
     });
 }
 
 function handleJoinRequest(data) {
-    // Auto-approve users upon request.
     channel.publish('approve-join', { approvedNickname: data.nickname });
 }
 
@@ -149,11 +140,11 @@ function kickUser(nickname) {
 }
 
 // --- Sync Logic for Late Joiners ---
-
-// Step 2 (Admin): Receive request and provide sync data.
 function handleSyncRequest(data) {
-    if (!player || !currentVideoId) return; // Don't sync if nothing is playing
-
+    if (!player || !currentVideoId || player.getPlayerState() === -1) {
+         console.log("Admin player not ready, cannot sync.");
+         return;
+    }
     const syncData = {
         videoId: currentVideoId,
         currentTime: player.getCurrentTime(),
@@ -161,46 +152,32 @@ function handleSyncRequest(data) {
         targetNickname: data.requesterNickname
     };
     channel.publish('sync-response', syncData);
-    console.log(`Sent sync data to ${data.requesterNickname}`);
 }
 
-// Step 3 (User): Receive sync data and apply it.
+// --- FIX 1: Overhauled handleSync for reliability ---
 function handleSync(data) {
     console.log("Applying sync data:", data);
-    // Ensure the player is ready before applying sync
+    const applySyncData = () => {
+        isEventFromAbly = true;
+        player.loadVideoById(data.videoId, data.currentTime);
+        // We now use the onStateChange event to play after loading.
+    };
+
     if (!isYouTubeApiReady) {
-        // If API isn't ready, wait for it, then create player with sync data
         window.onYouTubeIframeAPIReady = () => {
              isYouTubeApiReady = true;
-             createPlayer(data.videoId, () => applySyncData(data));
+             createPlayer(data.videoId, applySyncData);
         };
     } else if (!player) {
-        // If API is ready but player doesn't exist, create it
-        createPlayer(data.videoId, () => applySyncData(data));
+        createPlayer(data.videoId, applySyncData);
     } else {
-        // If player already exists, just apply the data
-        applySyncData(data);
+        applySyncData();
     }
 }
-
-function applySyncData(data) {
-    isEventFromAbly = true;
-    player.loadVideoById(data.videoId);
-    player.seekTo(data.currentTime, true);
-    if (data.state === YT.PlayerState.PLAYING) {
-        player.playVideo();
-    } else {
-        player.pauseVideo();
-    }
-}
-
 
 // --- User-Specific Logic ---
-// Step 1 (User): Get approved and request a sync.
 function handleApproval() {
-    if (waitingOverlay) {
-        waitingOverlay.style.display = 'none';
-    }
+    if (waitingOverlay) waitingOverlay.style.display = 'none';
     channel.publish('sync-request', { requesterNickname: NICKNAME });
     displayChatMessage('System', 'You have been admitted to the room.');
 }
@@ -211,11 +188,10 @@ function handleKick() {
     document.body.innerHTML = '<div class="fixed inset-0 bg-black flex items-center justify-center"><h1 class="text-2xl text-red-500">You have been kicked.</h1></div>';
 }
 
-
 // --- Real-time Video Control Handlers ---
 function handleSetVideo(data) {
     currentVideoId = data.videoId;
-    lastPlayerState = -1; // Reset state for new video
+    lastPlayerState = -1;
     if (player && typeof player.loadVideoById === 'function') {
         isEventFromAbly = true;
         player.loadVideoById(currentVideoId);
@@ -237,21 +213,22 @@ function handlePause() {
     player.pauseVideo();
 }
 
-
 // --- YouTube IFrame API Setup ---
 const tag = document.createElement('script');
 tag.src = "https://www.youtube.com/iframe_api";
 const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-// This function is called by the YouTube API script when it's ready.
 function onYouTubeIframeAPIReady() {
     console.log("YouTube API Ready");
     isYouTubeApiReady = true;
 }
 
 function createPlayer(videoId, onReadyCallback) {
-    if (player) return;
+    if (player) {
+        if (onReadyCallback) onReadyCallback();
+        return;
+    }
     player = new YT.Player('player', {
         height: '100%',
         width: '100%',
@@ -259,12 +236,11 @@ function createPlayer(videoId, onReadyCallback) {
         playerVars: { 
             playsinline: 1, 
             autoplay: 1, 
-            controls: IS_ADMIN ? 1 : 0, // Only admin gets player controls
+            controls: IS_ADMIN ? 1 : 0,
             origin: window.location.origin 
         },
         events: { 
             'onReady': (event) => {
-                console.log("Player is ready.");
                 if (onReadyCallback) onReadyCallback(event);
             }, 
             'onStateChange': onPlayerStateChange 
@@ -275,8 +251,21 @@ function createPlayer(videoId, onReadyCallback) {
 function onPlayerStateChange(event) {
     if (isEventFromAbly) {
         isEventFromAbly = false;
+        // --- FIX 1 (Part 2): Auto-play after a sync-load ---
+        // When loadVideoById finishes, it enters BUFFERING then PLAYING state.
+        // We use this to reliably start playback for sync receivers.
+        if(event.data === YT.PlayerState.PLAYING) {
+             console.log("Playback started by Ably event.");
+        }
         return;
     }
+    
+    // --- FIX 2: Prevent users from pausing the video ---
+    if (!IS_ADMIN && event.data === YT.PlayerState.PAUSED) {
+        player.playVideo();
+        return;
+    }
+
     if (!IS_ADMIN) return;
 
     if (event.data === lastPlayerState) return;
@@ -306,7 +295,6 @@ if (IS_ADMIN) {
         channel.publish('set-video', { videoId: videoId });
         urlInput.value = '';
     });
-
     userListContainer.addEventListener('click', (e) => {
         if (e.target.classList.contains('kick-btn')) {
             const nicknameToKick = e.target.dataset.kickId;
@@ -320,5 +308,4 @@ chatInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendChatMessage();
 });
 
-// --- Start the app ---
 main();

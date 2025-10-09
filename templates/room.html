@@ -16,10 +16,14 @@
         #player { border-radius: 1rem; box-shadow: 0px 30px 60px -15px rgba(0, 0, 0, 0.8), inset 0 0 15px rgba(168, 85, 247, 0.2); }
         .input-field:focus { box-shadow: 0 0 15px 2px rgba(168, 85, 247, 0.5), inset 0 2px 4px 0 rgba(0,0,0,0.5); border-color: var(--glow-color) !important; }
         .action-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(168, 85, 247, 0.4); }
-        #chat-messages { scrollbar-width: thin; scrollbar-color: var(--glow-color) #1f2937; }
+        /* Custom scrollbar for chat */
+        #chat-messages::-webkit-scrollbar { width: 8px; }
+        #chat-messages::-webkit-scrollbar-track { background: #1f2937; border-radius: 10px;}
+        #chat-messages::-webkit-scrollbar-thumb { background: var(--glow-color); border-radius: 10px; }
+        #chat-messages::-webkit-scrollbar-thumb:hover { background: #a855f7; }
     </style>
 </head>
-<body class="text-white flex items-center justify-center min-h-screen overflow-hidden p-4">
+<body class="text-white min-h-screen p-4">
 
     <div class="spline-container">
         <iframe src='https://my.spline.design/interdimensionalmessaged-6c5b9f71c172d7f57134376c7c4f45d3/' frameborder='0' width='100%' height='100%'></iframe>
@@ -32,9 +36,9 @@
     </div>
     {% endif %}
 
-    <main class="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
+    <main class="w-full max-w-7xl mx-auto my-8 grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
         
-        <div class="lg:col-span-2 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-6 space-y-4">
+        <div class="lg:col-span-2 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-4 sm:p-6 space-y-4">
             <header class="text-center">
                 <h1 class="text-3xl md:text-4xl font-bold tracking-wider font-['Orbitron']">Room: {{ room_id }}</h1>
                 <p class="text-md text-gray-400">{% if is_admin %}You are the <span class="text-purple-400 font-bold">Admin</span>.{% else %}You are a <span class="text-blue-400 font-bold">Viewer</span>.{% endif %}</p>
@@ -56,11 +60,11 @@
             {% endif %}
         </div>
 
-        <div class="lg:col-span-1 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-6 flex flex-col h-[85vh]">
+        <div class="lg:col-span-1 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-4 sm:p-6 flex flex-col max-h-[90vh]">
             {% if is_admin %}
             <div id="admin-panel">
                 <h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Participants</h3>
-                <div id="user-list" class="space-y-2 mb-4">
+                <div id="user-list" class="space-y-2 mb-4 max-h-48 overflow-y-auto">
                     </div>
             </div>
             {% endif %}
@@ -68,7 +72,7 @@
             <h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Live Chat</h3>
             <div id="chat-messages" class="flex-grow space-y-3 overflow-y-auto pr-2 mb-4">
                 </div>
-            <div class="flex gap-2">
+            <div class="flex gap-2 mt-auto">
                 <input type="text" id="chat-input" placeholder="Type a message..." class="input-field flex-grow bg-gray-800/70 border-2 border-gray-600 rounded-lg py-2 px-3 outline-none">
                 <button id="send-chat-btn" class="action-button bg-blue-600 hover:bg-blue-700 font-bold py-2 px-5 rounded-lg">Send</button>
             </div>
