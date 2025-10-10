@@ -46,12 +46,12 @@
     <div id="waiting-overlay" class="fixed inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center z-50"><h2 class="text-3xl font-bold text-purple-400 mb-4">Awaiting Admin Approval</h2><p class="text-gray-300">Your request to join has been sent. Please wait...</p></div>
     {% endif %}
 
-    <main class="w-full max-w-7xl mx-auto my-8 grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
+    <main class="w-full max-w-7xl mx-auto my-4 lg:my-8 grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6 relative z-10 h-screen lg:h-auto">
         
         <div class="lg:col-span-2 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-4 sm:p-6 space-y-4">
             <header class="text-center relative">
-                <div class="flex items-center justify-center gap-3">
-                    <h1 class="text-3xl md:text-4xl font-bold tracking-wider font-['Orbitron']">Room: <span id="room-id-text">{{ room_id }}</span></h1>
+                <div class="flex items-center justify-center gap-3 flex-wrap">
+                    <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold tracking-wider font-['Orbitron']">Room: <span id="room-id-text">{{ room_id }}</span></h1>
                     <button id="copy-room-id-btn" title="Copy Room ID" class="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375-3.75-3.75m3.75 3.75 3.75-3.75m-7.5-3.75h.008v.008h-.008v-.008Z" />
@@ -69,7 +69,7 @@
                 {% endif %}
             </header>
 
-            <div id="player-wrapper" class="aspect-video w-full bg-black rounded-lg overflow-hidden relative">
+            <div id="player-wrapper" class="aspect-video w-full bg-black rounded-lg overflow-hidden relative flex-shrink-0">
                 <div id="player" class="w-full h-full"></div>
                 {% if not is_admin %}
                 <div class="absolute top-2 right-2 z-20"><button id="fullscreen-btn" title="Toggle Fullscreen" class="p-2 bg-black bg-opacity-40 rounded-full hover:bg-opacity-75 transition-opacity opacity-60 hover:opacity-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-white"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m4.5 11.25h-4.5m4.5 0v-4.5m0 0L15 15" /></svg></button></div>
@@ -77,23 +77,23 @@
                 {% endif %}
             </div>
 
-            <div class="flex flex-col md:flex-row gap-4 items-center">
+            <div class="flex flex-col xs:flex-row gap-4 items-center flex-wrap">
                 <div class="relative flex-grow w-full"><input type="text" id="youtube-url" class="input-field w-full bg-gray-800/70 border-2 border-gray-600 focus:border-purple-500 rounded-lg py-3 pr-3 pl-4 outline-none" placeholder="Paste a YouTube URL..."></div>
-                <button id="add-to-queue-btn" class="action-button w-full sm:w-auto bg-green-600 hover:bg-green-700 font-bold py-3 px-6 rounded-lg transition-all">Add to Queue</button>
+                <button id="add-to-queue-btn" class="action-button w-full xs:w-auto bg-green-600 hover:bg-green-700 font-bold py-3 px-6 rounded-lg transition-all">Add to Queue</button>
                 {% if is_admin %}
-                <button id="play-immediately-btn" class="action-button w-full sm:w-auto bg-purple-600 hover:bg-purple-700 font-bold py-3 px-6 rounded-lg transition-all">Play Now</button>
-                <button id="end-room-btn" class="action-button w-full sm:w-auto bg-red-800 hover:bg-red-700 font-bold py-3 px-6 rounded-lg transition-all">End Room</button>
+                <button id="play-immediately-btn" class="action-button w-full xs:w-auto bg-purple-600 hover:bg-purple-700 font-bold py-3 px-6 rounded-lg transition-all">Play Now</button>
+                <button id="end-room-btn" class="action-button w-full xs:w-auto bg-red-800 hover:bg-red-700 font-bold py-3 px-6 rounded-lg transition-all">End Room</button>
                 {% endif %}
             </div>
         </div>
         
-        <div class="lg:col-span-1 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-4 sm:p-6 flex flex-col max-h-[90vh]">
-            <div id="participant-panel"><h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Participants (<span id="participant-count">0</span>)</h3><div id="user-list" class="space-y-2 mb-2 max-h-24 overflow-y-auto"></div></div>
+        <div class="lg:col-span-1 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-4 sm:p-6 flex flex-col h-full min-h-0">
+            <div id="participant-panel"><h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Participants (<span id="participant-count">0</span>)</h3><div id="user-list" class="space-y-2 mb-2 max-h-24 lg:max-h-32 xl:max-h-40 overflow-y-auto"></div></div>
             <div id="now-playing-panel"><h3 class="text-xl font-bold text-green-400 border-b-2 border-gray-700 pb-2 mb-3">Now Playing</h3><div id="now-playing-card" class="mb-4"></div></div>
-            <div id="queue-panel"><h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Up Next</h3><div id="queue-list" class="space-y-2 mb-4 max-h-32 overflow-y-auto"></div></div>
+            <div id="queue-panel"><h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Up Next</h3><div id="queue-list" class="space-y-2 mb-4 max-h-32 lg:max-h-48 xl:max-h-56 overflow-y-auto"></div></div>
             <h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Live Chat</h3>
-            <div id="chat-messages" class="flex-grow space-y-3 overflow-y-auto pr-2 mb-4"></div>
-            <div class="flex gap-2 mt-auto">
+            <div id="chat-messages" class="flex-1 space-y-3 overflow-y-auto pr-2 mb-4 min-h-0"></div>
+            <div class="flex gap-2 mt-auto flex-shrink-0">
                 <div class="relative flex-grow">
                     <input type="text" id="chat-input" placeholder="Type a message..." class="input-field w-full bg-gray-800/70 border-2 border-gray-600 rounded-lg py-2 pl-3 pr-12 outline-none">
                     <button id="emoji-btn" title="Add emoji" class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-purple-400 transition-colors">
