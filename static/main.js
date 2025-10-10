@@ -68,32 +68,35 @@ function isNameValid(name) {
         nameError.textContent = "Name must be between 2 and 20 characters.";
         return false;
     }
-    if (name.trim().toLowerCase() === 'admin') {
+    // Allow admin to use the name "Admin" if they want
+    if (name.trim().toLowerCase() === 'admin' && !IS_ADMIN_FLAG) {
         nameError.textContent = "That name is reserved.";
         return false;
     }
     return true;
 }
 
+// ========== THIS IS THE CORRECTED FUNCTION ==========
 function getIdentity() {
     return new Promise((resolve) => {
-        if (IS_ADMIN_FLAG) {
-            NICKNAME = 'Admin';
-            CLIENT_ID = 'admin-client';
-            resolve();
-            return;
-        }
-
+        // Always show the modal for everyone
         nameModalOverlay.classList.remove('hidden');
         nameModalOverlay.classList.add('visible');
-        
+
         nameForm.addEventListener('submit', (e) => {
             e.preventDefault();
             const name = nameInput.value.trim();
             if (isNameValid(name)) {
                 NICKNAME = name;
-                CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
                 
+                // Set the client ID based on whether the user is an admin or not
+                if (IS_ADMIN_FLAG) {
+                    CLIENT_ID = 'admin-client';
+                } else {
+                    CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
+                }
+
+                // Hide the modal with an animation
                 nameModalContent.style.transform = 'scale(0.95)';
                 nameModalContent.style.opacity = '0';
                 setTimeout(() => {
@@ -101,11 +104,12 @@ function getIdentity() {
                     nameModalOverlay.classList.remove('visible');
                 }, 300);
 
-                resolve();
+                resolve(); // Continue with the main app logic
             }
         });
     });
 }
+// ======================================================
 
 
 // --- Ably Connection & Main Logic ---

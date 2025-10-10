@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
   <title>Stream Together {% if is_admin %}- Admin Control{% endif %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M10 10 H90 V90 H10 Z' rx='15' fill='%23111827'/%3E%3Cpath d='M35 25 L75 50 L35 75 Z' fill='rgb(168, 85, 247)'/%3E%3C/svg%3E">
+
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -29,8 +31,6 @@
 
   <div id="dynamic-background"></div>
   
-
-  <!-- Name Modal -->
   <div id="name-modal-overlay" class="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[100] hidden px-4">
     <div id="name-modal-content" class="bg-gray-800 p-6 sm:p-8 rounded-2xl shadow-lg border border-gray-700 w-full max-w-sm transform scale-95 opacity-0 transition-all duration-300">
       <h2 class="text-2xl font-bold text-purple-400 mb-4 text-center">Welcome!</h2>
@@ -50,10 +50,8 @@
   </div>
   {% endif %}
 
-  <!-- Main Layout -->
   <main class="w-full max-w-7xl mx-auto h-full grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6 relative z-10 grid-rows-1 pb-16 sm:pb-0">
 
-    <!-- Left Section (Video + Controls) -->
     <div class="lg:col-span-2 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-4 sm:p-6 flex flex-col space-y-4 h-full">
       <header class="text-center relative">
         <div class="flex items-center justify-center gap-3 flex-wrap">
@@ -76,7 +74,6 @@
         {% endif %}
       </header>
 
-      <!-- Video Player -->
       <div id="player-wrapper" class="relative aspect-video w-full bg-black rounded-lg overflow-hidden flex-shrink-0">
         <div id="player" class="w-full h-full"></div>
 
@@ -98,7 +95,6 @@
         {% endif %}
       </div>
 
-      <!-- Controls -->
       <div class="flex flex-col sm:flex-row gap-4 items-center flex-wrap">
         <div class="relative flex-grow w-full min-w-0">
           <input type="text" id="youtube-url" class="input-field w-full bg-gray-800/70 border-2 border-gray-600 focus:border-purple-500 rounded-lg py-3 pr-3 pl-4 outline-none" placeholder="Paste a YouTube URL...">
@@ -111,7 +107,6 @@
       </div>
     </div>
 
-    <!-- Right Section (Chat + Participants + Queue) -->
     <div class="lg:col-span-1 bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-2xl p-4 sm:p-6 flex flex-col h-[75vh] lg:h-full min-h-0">
       <div id="participant-panel">
         <h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Participants (<span id="participant-count">0</span>)</h3>
