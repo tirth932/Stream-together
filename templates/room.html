@@ -77,12 +77,12 @@
                 {% endif %}
             </div>
 
-            <div class="flex flex-col xs:flex-row gap-4 items-center flex-wrap">
-                <div class="relative flex-grow w-full"><input type="text" id="youtube-url" class="input-field w-full bg-gray-800/70 border-2 border-gray-600 focus:border-purple-500 rounded-lg py-3 pr-3 pl-4 outline-none" placeholder="Paste a YouTube URL..."></div>
-                <button id="add-to-queue-btn" class="action-button w-full xs:w-auto bg-green-600 hover:bg-green-700 font-bold py-3 px-6 rounded-lg transition-all">Add to Queue</button>
+            <div class="flex flex-col sm:flex-row gap-4 items-center flex-wrap">
+                <div class="relative flex-grow w-full min-w-0"><input type="text" id="youtube-url" class="input-field w-full bg-gray-800/70 border-2 border-gray-600 focus:border-purple-500 rounded-lg py-3 pr-3 pl-4 outline-none" placeholder="Paste a YouTube URL..."></div>
+                <button id="add-to-queue-btn" class="action-button flex-shrink-0 bg-green-600 hover:bg-green-700 font-bold py-3 px-6 rounded-lg transition-all">Add to Queue</button>
                 {% if is_admin %}
-                <button id="play-immediately-btn" class="action-button w-full xs:w-auto bg-purple-600 hover:bg-purple-700 font-bold py-3 px-6 rounded-lg transition-all">Play Now</button>
-                <button id="end-room-btn" class="action-button w-full xs:w-auto bg-red-800 hover:bg-red-700 font-bold py-3 px-6 rounded-lg transition-all">End Room</button>
+                <button id="play-immediately-btn" class="action-button flex-shrink-0 bg-purple-600 hover:bg-purple-700 font-bold py-3 px-6 rounded-lg transition-all">Play Now</button>
+                <button id="end-room-btn" class="action-button flex-shrink-0 bg-red-800 hover:bg-red-700 font-bold py-3 px-6 rounded-lg transition-all">End Room</button>
                 {% endif %}
             </div>
         </div>
