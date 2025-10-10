@@ -28,6 +28,19 @@ const changeNameBtn = document.getElementById('change-name-btn');
 const endRoomBtn = document.getElementById('end-room-btn');
 const playImmediatelyBtn = document.getElementById('play-immediately-btn');
 const syncRoomBtn = document.getElementById('sync-room-btn');
+// Modal and Emoji Elements
+const nameModalOverlay = document.getElementById('name-modal-overlay');
+const nameModalContent = document.getElementById('name-modal-content');
+const nameForm = document.getElementById('name-form');
+const nameInput = document.getElementById('name-input');
+const nameError = document.getElementById('name-error');
+const emojiBtn = document.getElementById('emoji-btn');
+const emojiPicker = document.getElementById('emoji-picker');
+// New Copy Button Elements
+const copyRoomIdBtn = document.getElementById('copy-room-id-btn');
+const roomIdText = document.getElementById('room-id-text');
+const copyFeedback = document.getElementById('copy-feedback');
+
 
 // --- State ---
 let player;
@@ -46,47 +59,60 @@ let lastKnownTime = 0; // <-- where we will resume from (seconds)
 
 // --- Helper Functions ---
 function isNameValid(name) {
+    nameError.textContent = ''; // Clear previous errors
     if (!name || name.trim().length === 0) {
-        alert("Name cannot be empty.");
+        nameError.textContent = "Name cannot be empty.";
         return false;
     }
     if (name.length < 2 || name.length > 20) {
-        alert("Name must be between 2 and 20 characters.");
+        nameError.textContent = "Name must be between 2 and 20 characters.";
         return false;
     }
     if (name.trim().toLowerCase() === 'admin') {
-        alert("That name is reserved.");
+        nameError.textContent = "That name is reserved.";
         return false;
     }
     return true;
 }
 
 function getIdentity() {
-    if (IS_ADMIN_FLAG) {
-        NICKNAME = 'Admin';
-        CLIENT_ID = 'admin-client';
-        return;
-    }
-    let name = '';
-    let isValid = false;
-    while (!isValid) {
-        name = prompt("Please enter your name to join the room:", "");
-        if (name === null) {
-            name = `Guest-${Math.random().toString(36).substring(2, 6)}`;
-            isValid = true;
-        } else if (isNameValid(name)) {
-            isValid = true;
+    return new Promise((resolve) => {
+        if (IS_ADMIN_FLAG) {
+            NICKNAME = 'Admin';
+            CLIENT_ID = 'admin-client';
+            resolve();
+            return;
         }
-    }
-    NICKNAME = name.trim();
-    CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
+
+        nameModalOverlay.classList.remove('hidden');
+        nameModalOverlay.classList.add('visible');
+        
+        nameForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = nameInput.value.trim();
+            if (isNameValid(name)) {
+                NICKNAME = name;
+                CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
+                
+                nameModalContent.style.transform = 'scale(0.95)';
+                nameModalContent.style.opacity = '0';
+                setTimeout(() => {
+                    nameModalOverlay.classList.add('hidden');
+                    nameModalOverlay.classList.remove('visible');
+                }, 300);
+
+                resolve();
+            }
+        });
+    });
 }
+
 
 // --- Ably Connection & Main Logic ---
 let ably, channel;
 async function main() {
-    getIdentity();
-    // Try restoring last state from localStorage (optional)
+    await getIdentity();
+    
     try {
         const saved = localStorage.getItem(`lastVideoState_${ROOM_ID}`);
         if (saved) {
@@ -96,39 +122,35 @@ async function main() {
                 lastKnownTime = parsed.time || 0;
             }
         }
-    } catch (e) {
-        console.warn("Could not parse saved state:", e);
-    }
+    } catch (e) { console.warn("Could not parse saved state:", e); }
 
     ably = new Ably.Realtime.Promise({ key: ABLY_API_KEY, clientId: CLIENT_ID });
     channel = ably.channels.get(`stream-together:${ROOM_ID}`);
 
     try {
         await channel.attach();
-        const history = await channel.history({ limit: 50, direction: 'backwards' }); // fetch recent events
-        // get most recent now-playing, queue, and time-update if present
-        const lastNowPlayingMsg = history.items.slice().reverse().find(msg => msg.name === 'now-playing-updated');
-        const lastQueueMsg = history.items.slice().reverse().find(msg => msg.name === 'queue-updated');
-        // time-update messages may be many; pick the most recent for the current video
-        const timeUpdateMsgs = history.items.slice().reverse().filter(msg => msg.name === 'time-update');
+        const history = await channel.history({ limit: 50, direction: 'backwards' });
+        // Fix: Assuming history.items[0] is most recent, find the most recent matching messages
+        const lastNowPlayingMsg = history.items.find(msg => msg.name === 'now-playing-updated');
+        const lastQueueMsg = history.items.find(msg => msg.name === 'queue-updated');
+        const timeUpdateMsgs = history.items.filter(msg => msg.name === 'time-update');
         let lastTimeForVideo = null;
         if (timeUpdateMsgs.length > 0) {
-            // Prefer the most recent time-update where videoId matches currentVideoId (if known)
-            if (currentVideoId) {
-                lastTimeForVideo = timeUpdateMsgs.find(m => m.data && m.data.videoId === currentVideoId);
+            // Get most recent for current video, or most recent overall
+            const relevantTimes = timeUpdateMsgs.filter(m => m.data && m.data.videoId === currentVideoId);
+            if (relevantTimes.length > 0) {
+                lastTimeForVideo = relevantTimes[0];
+            } else {
+                lastTimeForVideo = timeUpdateMsgs[0];
             }
-            // otherwise pick the most recent time-update overall
-            if (!lastTimeForVideo) lastTimeForVideo = timeUpdateMsgs[0];
         }
 
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
         if (lastNowPlayingMsg) {
             handleNowPlayingUpdated(lastNowPlayingMsg.data);
-            // if time-update exists for that video, use it
             if (lastTimeForVideo && lastTimeForVideo.data) {
                 lastKnownTime = lastTimeForVideo.data.currentTime || lastKnownTime;
             }
-            // create player if nowPlaying exists
             if (nowPlayingItem) {
                 if (isYouTubeApiReady) {
                     createPlayer(nowPlayingItem.videoId);
@@ -137,7 +159,6 @@ async function main() {
                 }
             }
         } else if (currentVideoId) {
-            // If localStorage provided a currentVideoId but history had no now-playing, still create player
             if (isYouTubeApiReady) {
                 createPlayer(currentVideoId);
             } else {
@@ -156,7 +177,6 @@ async function main() {
     }
     window.addEventListener('beforeunload', () => { if (channel) channel.presence.leave(); });
 
-    // Admin: start periodic time broadcasts
     startAdminTimeBroadcast();
 }
 
@@ -178,9 +198,7 @@ function handleAblyMessages(message) {
         case 'room-ended': handleRoomEnded(message.data); break;
         case 'promote-to-admin': handlePromotion(message.data); break;
         case 'time-update':
-            // update lastKnownTime when receiving admin time updates for the current video
             if (message.data && message.data.videoId) {
-                // if we don't have a currentVideoId yet, accept it
                 if (!currentVideoId) currentVideoId = message.data.videoId;
                 if (message.data.videoId === currentVideoId) {
                     lastKnownTime = message.data.currentTime || 0;
@@ -236,7 +254,18 @@ function handleNowPlayingUpdated({ item }) {
     if (item && item.videoId) currentVideoId = item.videoId;
     renderNowPlaying();
     updateBackgroundColor(item ? item.thumbnail : null);
+
+    // ✅ Save the latest now-playing info in localStorage
+    try {
+        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({
+            videoId: currentVideoId,
+            time: 0 // start from beginning for new song
+        }));
+    } catch (e) {
+        console.warn("Could not save now playing:", e);
+    }
 }
+
 function renderQueue() {
     if (!queueListContainer) return;
     queueListContainer.innerHTML = '';
@@ -260,7 +289,18 @@ function playItemNow(item) {
     channel.publish('chat-message', { nickname: 'System', text: `Now playing "${item.title}" (added by ${item.addedBy})`, isSystem: true });
     channel.publish('now-playing-updated', { item: item });
     channel.publish('set-video', { videoId: item.videoId });
+
+    // ✅ Persist in localStorage
+    try {
+        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({
+            videoId: item.videoId,
+            time: 0
+        }));
+    } catch (e) {
+        console.warn("Could not save play-now state:", e);
+    }
 }
+
 
 function playNextInQueue() {
     if (!IS_ADMIN_FLAG) return;
@@ -332,7 +372,7 @@ function handleSync(data) {
         isEventFromAbly = true;
         if (data.videoId) {
             isResyncing = true;
-            lastKnownTime = data.currentTime || 0; // <-- store it
+            lastKnownTime = data.currentTime || 0;
             if (player.getVideoData().video_id === data.videoId) {
                 player.seekTo(data.currentTime, true);
             } else {
@@ -365,12 +405,28 @@ function handleRoomEnded(data) { alert(data.message); ably.close(); window.locat
 
 // --- Real-time Video Control Handlers ---
 function handleSetVideo(data) {
-    currentVideoId = data.videoId; lastPlayerState = -1;
-    // reset lastKnownTime when admin explicitly sets a new video
+    currentVideoId = data.videoId;
+    lastPlayerState = -1;
     lastKnownTime = 0;
-    if (player && typeof player.loadVideoById === 'function') { isEventFromAbly = true; player.loadVideoById(currentVideoId);
-    } else if (isYouTubeApiReady) { createPlayer(currentVideoId); }
+
+    // ✅ Save immediately
+    try {
+        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({
+            videoId: currentVideoId,
+            time: 0
+        }));
+    } catch (e) {
+        console.warn("Could not save set-video state:", e);
+    }
+
+    if (player && typeof player.loadVideoById === 'function') {
+        isEventFromAbly = true;
+        player.loadVideoById(currentVideoId);
+    } else if (isYouTubeApiReady) {
+        createPlayer(currentVideoId);
+    }
 }
+
 function handlePlay(data) { if (!player) return; isEventFromAbly = true; player.seekTo(data.currentTime, true); player.playVideo(); }
 function handlePause() { if (!player) return; isEventFromAbly = true; player.pauseVideo(); }
 
@@ -381,19 +437,15 @@ const firstScriptTag = document.getElementsByTagName('script')[0];
 firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 function onYouTubeIframeAPIReady() { isYouTubeApiReady = true; }
 function createPlayer(videoId, onReadyCallback) {
-    // if existing player, try to reuse and seek/load at lastKnownTime
     if (player) {
         try {
             if (player.getVideoData().video_id !== videoId) {
-                // load at lastKnownTime
                 player.loadVideoById(videoId, lastKnownTime || 0);
             } else {
-                // same video; seek to lastKnownTime
                 player.seekTo(lastKnownTime || 0, true);
             }
         } catch (e) {
             console.warn("Error reusing player, creating a new one:", e);
-            // fallthrough to create new player
         }
         if (onReadyCallback) onReadyCallback();
         return;
@@ -401,12 +453,16 @@ function createPlayer(videoId, onReadyCallback) {
 
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
-        playerVars: { playsinline: 1, autoplay: 0, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin },
+        playerVars: { 
+            playsinline: 1, 
+            autoplay: 0, 
+            controls: IS_ADMIN_FLAG ? 1 : 0, 
+            origin: window.location.origin,
+            enablejsapi: 1
+        },
         events: { 'onReady': (event) => {
-            // On ready, ensure we start at lastKnownTime if available
             try {
                 if (lastKnownTime && lastKnownTime > 0) {
-                    // load or seek to lastKnownTime
                     if (event.target.getVideoData().video_id === videoId) {
                         event.target.seekTo(lastKnownTime, true);
                     } else {
@@ -415,7 +471,6 @@ function createPlayer(videoId, onReadyCallback) {
                 }
             } catch (e) { console.warn("Error seeking on ready:", e); }
             if (IS_ADMIN_FLAG && nowPlayingItem) {
-                // Admin should start playback (if they want)
                 event.target.playVideo();
             }
             if (onReadyCallback) onReadyCallback(event);
@@ -425,10 +480,7 @@ function createPlayer(videoId, onReadyCallback) {
 function onPlayerStateChange(event) {
     if (isEventFromAbly) { isEventFromAbly = false; return; }
     if (isResyncing && event.data === YT.PlayerState.PLAYING) { isResyncing = false; return; }
-    if (!IS_ADMIN_FLAG) {
-        // Local pause/play is now allowed. They must use the explicit "Sync with Room" button to resync.
-        return;
-    }
+    if (!IS_ADMIN_FLAG) { return; }
     if (event.data === lastPlayerState) return;
     lastPlayerState = event.data;
     switch (event.data) {
@@ -444,7 +496,6 @@ function onPlayerStateChange(event) {
     }
 }
 
-// --- CRITICAL FIX: Corrected the typo and added support for Shorts URLs ---
 function extractVideoID(url) {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|\&v=)([^#\&\?]*).*/;
     const match = url.match(regExp);
@@ -452,6 +503,21 @@ function extractVideoID(url) {
 }
 
 // --- Event Listeners ---
+if (copyRoomIdBtn && roomIdText && copyFeedback) {
+    copyRoomIdBtn.addEventListener('click', () => {
+        const roomId = roomIdText.textContent;
+        navigator.clipboard.writeText(roomId).then(() => {
+            copyFeedback.style.opacity = '1';
+            setTimeout(() => {
+                copyFeedback.style.opacity = '0';
+            }, 2000);
+        }).catch(err => {
+            console.error('Failed to copy room ID: ', err);
+            alert('Could not copy Room ID.');
+        });
+    });
+}
+
 addToQueueBtn.addEventListener('click', async () => {
     addToQueueBtn.disabled = true;
     const newItem = await getVideoItemFromUrl();
@@ -526,7 +592,7 @@ if (IS_ADMIN_FLAG) {
             const newVolume = e.target.value;
             player.setVolume(newVolume); lastVolume = newVolume;
             if (newVolume > 0 && player.isMuted()) { player.unMute(); volumeOnIcon.classList.remove('hidden'); volumeOffIcon.classList.add('hidden');
-            } else if (newVolume == 0 && !player.isMuted()) { player.mute(); volumeOnIcon.classList.add('hidden'); volumeOffIcon.classList.remove('hidden'); }
+            } else if (newVolume == 0 && !player.isMuted()) { player.mute(); volumeOnIcon.classList.add('hidden'); volumeOffIcon.remove('hidden'); }
         });
     }
 }
@@ -545,15 +611,12 @@ function startAdminTimeBroadcast() {
                 const t = player.getCurrentTime();
                 currentVideoId = player.getVideoData().video_id || currentVideoId;
                 channel.publish('time-update', { videoId: currentVideoId, currentTime: t });
-                // persist locally as a fallback
                 try {
                     localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: currentVideoId, time: t }));
                 } catch (e) { /* ignore localStorage failures */ }
             }
-        } catch (e) {
-            // ignore errors if player unavailable
-        }
-    }, 5000); // every 5 seconds
+        } catch (e) { }
+    }, 5000);
 }
 function stopAdminTimeBroadcast() {
     if (adminBroadcastIntervalId) {
@@ -562,5 +625,34 @@ function stopAdminTimeBroadcast() {
     }
 }
 
+// --- Emoji Picker Logic ---
+function initEmojiPicker() {
+    const emojis = ['😀', '😂', '😍', '🤔', '😎', '😢', '🔥', '❤️', '👍', '👎', '🎉', '🚀', '💯', '👏', '👀', '🍿'];
+    
+    emojis.forEach(emoji => {
+        const button = document.createElement('button');
+        button.className = 'p-1 text-2xl rounded-md hover:bg-gray-700 transition-colors';
+        button.textContent = emoji;
+        button.addEventListener('click', () => {
+            chatInput.value += emoji;
+            emojiPicker.classList.add('hidden');
+            chatInput.focus();
+        });
+        emojiPicker.appendChild(button);
+    });
+
+    emojiBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        emojiPicker.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!emojiPicker.contains(e.target) && !emojiBtn.contains(e.target)) {
+            emojiPicker.classList.add('hidden');
+        }
+    });
+}
+
 // --- Startup ---
 main();
+initEmojiPicker();
