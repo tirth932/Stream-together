@@ -205,7 +205,11 @@ function handleAblyMessages(message) {
         case 'sync-request': if (IS_ADMIN_FLAG) handleSyncRequest(message.data); break;
         case 'sync-response': if (message.data.targetClientId === CLIENT_ID) handleSync(message.data); break;
         case 'kick-user': if (message.data.kickedClientId === CLIENT_ID) handleKick(); break;
-        case 'chat-message': displayChatMessage(message.data, message.clientId); break;
+        case 'chat-message': 
+            if (message.clientId !== CLIENT_ID) {
+                displayChatMessage(message.data, message.clientId);
+            }
+            break;
         case 'add-to-queue': if (IS_ADMIN_FLAG) handleAddToQueue(message.data); break;
         case 'queue-updated': handleQueueUpdated(message.data); break;
         case 'now-playing-updated': handleNowPlayingUpdated(message.data); break;
@@ -349,8 +353,8 @@ function displayChatMessage(data, clientId) {
         }
         // Show browser notification if tab is hidden
         if (document.hidden && Notification.permission === 'granted') {
-            new Notification(`New message from ${nickname}`, {
-                body: text,
+            new Notification(`${nickname}: ${text}`, {
+                body: `New message in room ${ROOM_ID}`,
                 icon: '/static/favicon.ico' // Optional: add a favicon
             });
         }
