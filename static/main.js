@@ -113,6 +113,11 @@ let ably, channel;
 async function main() {
     await getIdentity();
     
+    // Request notification permission on load
+    if (Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+    
     try {
         const saved = localStorage.getItem(`lastVideoState_${ROOM_ID}`);
         if (saved) {
@@ -306,6 +311,8 @@ function sendChatMessage() {
     const text = chatInput.value.trim();
     if (text === '') return;
     if (text.length > 280) { alert("Your message is too long (max 280 characters)."); return; }
+    // Display own message immediately for better UX
+    displayChatMessage({ nickname: NICKNAME, text: text }, CLIENT_ID);
     channel.publish('chat-message', { nickname: NICKNAME, text: text });
     chatInput.value = '';
     sendChatBtn.disabled = true;
@@ -621,10 +628,6 @@ function initNotificationControls() {
             notificationsOnIcon.classList.remove('hidden');
             notificationsOffIcon.classList.add('hidden');
             toggleNotificationsBtn.setAttribute('title', 'Mute Notifications');
-            // Ask for permission when user unmutes for the first time
-            if (Notification.permission === 'default') {
-                Notification.requestPermission();
-            }
         }
     });
 
