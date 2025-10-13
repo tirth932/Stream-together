@@ -1,3 +1,4 @@
+main.js
 // stream-together-client.js
 const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 const ROOM_ID = document.location.pathname.split('/').pop();
@@ -45,6 +46,10 @@ const toggleNotificationsBtn = document.getElementById('toggle-notifications-btn
 const notificationsOnIcon = document.getElementById('notifications-on-icon');
 const notificationsOffIcon = document.getElementById('notifications-off-icon');
 const chatNotificationSound = document.getElementById('chat-notification-sound');
+// --- NEW: Global Notifications Elements ---
+const globalNotificationsToggle = document.getElementById('global-notifications-toggle');
+const globalNotificationsOnIcon = document.getElementById('global-notifications-on-icon');
+const globalNotificationsOffIcon = document.getElementById('global-notifications-off-icon');
 
 
 // --- State ---
@@ -63,6 +68,7 @@ let isResyncing = false;
 let lastKnownTime = 0;
 // --- UPDATED: Notification State ---
 let areNotificationsMuted = false;
+let globalNotificationsEnabled = true;
 let hasInteracted = false; // For fixing audio playback
 let unreadCount = 0; // For tracking unread messages when tab is hidden
 
@@ -138,12 +144,16 @@ async function main() {
         const lastNowPlayingMsg = history.items.slice().reverse().find(msg => msg.name === 'now-playing-updated');
         const lastQueueMsg = history.items.slice().reverse().find(msg => msg.name === 'queue-updated');
         const timeUpdateMsgs = history.items.slice().reverse().filter(msg => msg.name === 'time-update');
+        const lastGlobalNotifMsg = history.items.slice().reverse().find(msg => msg.name === 'global-notifications-toggled');
         let lastTimeForVideo = null;
         if (timeUpdateMsgs.length > 0) {
             if (currentVideoId) {
                 lastTimeForVideo = timeUpdateMsgs.find(m => m.data && m.data.videoId === currentVideoId);
             }
             if (!lastTimeForVideo) lastTimeForVideo = timeUpdateMsgs[0];
+        }
+        if (lastGlobalNotifMsg) {
+            globalNotificationsEnabled = lastGlobalNotifMsg.data.enabled;
         }
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
         if (lastNowPlayingMsg) {
@@ -159,6 +169,7 @@ async function main() {
             if (isYouTubeApiReady) { createPlayer(currentVideoId); } 
             else { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(currentVideoId); }; }
         }
+        if (IS_ADMIN_FLAG) updateGlobalToggleUI();
     } catch (err) { console.error("Could not retrieve channel history:", err); }
 
     const presenceData = { nickname: NICKNAME, isAdmin: IS_ADMIN_FLAG };
@@ -222,6 +233,10 @@ function handleAblyMessages(message) {
                     lastKnownTime = message.data.currentTime || 0;
                 }
             }
+            break;
+        case 'global-notifications-toggled':
+            globalNotificationsEnabled = message.data.enabled;
+            if (IS_ADMIN_FLAG) updateGlobalToggleUI();
             break;
     }
 }
@@ -345,7 +360,7 @@ function displayChatMessage(data, clientId) {
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 
     // --- UPDATED: Enhanced Notification Logic ---
-    if (!isSystem && !isMyOwnMessage && !areNotificationsMuted) {
+    if (!isSystem && !isMyOwnMessage && !areNotificationsMuted && (IS_ADMIN_FLAG || globalNotificationsEnabled)) {
         unreadCount++;
         // Play sound if user has interacted with the page
         if (hasInteracted) {
@@ -557,6 +572,12 @@ if (IS_ADMIN_FLAG) {
             setTimeout(() => { ably.close(); window.location.href = '/'; }, 500);
         }
     });
+    if (globalNotificationsToggle) {
+        globalNotificationsToggle.addEventListener('click', () => {
+            const newState = !globalNotificationsEnabled;
+            channel.publish('global-notifications-toggled', { enabled: newState });
+        });
+    }
 } else {
     leaveRoomBtn.addEventListener('click', () => { ably.close(); window.location.href = '/'; });
     changeNameBtn.addEventListener('click', async () => {
@@ -647,6 +668,20 @@ function initNotificationControls() {
             unreadCount = 0;
         }
     });
+}
+
+// --- NEW: Global Toggle UI Update ---
+function updateGlobalToggleUI() {
+    if (!globalNotificationsOnIcon) return;
+    if (globalNotificationsEnabled) {
+        globalNotificationsOnIcon.classList.remove('hidden');
+        globalNotificationsOffIcon.classList.add('hidden');
+        globalNotificationsToggle.setAttribute('title', 'Disable Notifications for Viewers');
+    } else {
+        globalNotificationsOnIcon.classList.add('hidden');
+        globalNotificationsOffIcon.classList.remove('hidden');
+        globalNotificationsToggle.setAttribute('title', 'Enable Notifications for Viewers');
+    }
 }
 
 // --- Emoji Picker Logic ---
