@@ -36,10 +36,15 @@ const nameInput = document.getElementById('name-input');
 const nameError = document.getElementById('name-error');
 const emojiBtn = document.getElementById('emoji-btn');
 const emojiPicker = document.getElementById('emoji-picker');
-// New Copy Button Elements
+// Copy Button Elements
 const copyRoomIdBtn = document.getElementById('copy-room-id-btn');
 const roomIdText = document.getElementById('room-id-text');
 const copyFeedback = document.getElementById('copy-feedback');
+// --- NEW: Notification Elements ---
+const toggleNotificationsBtn = document.getElementById('toggle-notifications-btn');
+const notificationsOnIcon = document.getElementById('notifications-on-icon');
+const notificationsOffIcon = document.getElementById('notifications-off-icon');
+const chatNotificationSound = document.getElementById('chat-notification-sound');
 
 
 // --- State ---
@@ -55,11 +60,13 @@ let videoQueue = [];
 let nowPlayingItem = null;
 const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)';
 let isResyncing = false;
-let lastKnownTime = 0; // <-- where we will resume from (seconds)
+let lastKnownTime = 0;
+// --- NEW: Notification State ---
+let areNotificationsMuted = false;
 
 // --- Helper Functions ---
 function isNameValid(name) {
-    nameError.textContent = ''; // Clear previous errors
+    nameError.textContent = '';
     if (!name || name.trim().length === 0) {
         nameError.textContent = "Name cannot be empty.";
         return false;
@@ -68,7 +75,6 @@ function isNameValid(name) {
         nameError.textContent = "Name must be between 2 and 20 characters.";
         return false;
     }
-    // Allow admin to use the name "Admin" if they want
     if (name.trim().toLowerCase() === 'admin' && !IS_ADMIN_FLAG) {
         nameError.textContent = "That name is reserved.";
         return false;
@@ -76,12 +82,13 @@ function isNameValid(name) {
     return true;
 }
 
-// ========== THIS IS THE CORRECTED FUNCTION ==========
 function getIdentity() {
     return new Promise((resolve) => {
-        // Always show the modal for everyone
         nameModalOverlay.classList.remove('hidden');
         nameModalOverlay.classList.add('visible');
+        if (IS_ADMIN_FLAG) {
+            nameInput.value = "Admin";
+        }
 
         nameForm.addEventListener('submit', (e) => {
             e.preventDefault();
@@ -89,14 +96,13 @@ function getIdentity() {
             if (isNameValid(name)) {
                 NICKNAME = name;
                 
-                // Set the client ID based on whether the user is an admin or not
+                // --- FIX: Ensure unique client ID for admins to prevent conflicts ---
                 if (IS_ADMIN_FLAG) {
-                    CLIENT_ID = 'admin-client';
+                    CLIENT_ID = `admin-${Math.random().toString(36).substring(2, 10)}`;
                 } else {
                     CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
                 }
 
-                // Hide the modal with an animation
                 nameModalContent.style.transform = 'scale(0.95)';
                 nameModalContent.style.opacity = '0';
                 setTimeout(() => {
@@ -104,12 +110,11 @@ function getIdentity() {
                     nameModalOverlay.classList.remove('visible');
                 }, 300);
 
-                resolve(); // Continue with the main app logic
+                resolve();
             }
         });
     });
 }
-// ======================================================
 
 
 // --- Ably Connection & Main Logic ---
@@ -134,19 +139,15 @@ async function main() {
     try {
         await channel.attach();
         const history = await channel.history({ limit: 50, direction: 'backwards' });
-        // Fix: Assuming history.items[0] is most recent, find the most recent matching messages
-        const lastNowPlayingMsg = history.items.find(msg => msg.name === 'now-playing-updated');
-        const lastQueueMsg = history.items.find(msg => msg.name === 'queue-updated');
-        const timeUpdateMsgs = history.items.filter(msg => msg.name === 'time-update');
+        const lastNowPlayingMsg = history.items.slice().reverse().find(msg => msg.name === 'now-playing-updated');
+        const lastQueueMsg = history.items.slice().reverse().find(msg => msg.name === 'queue-updated');
+        const timeUpdateMsgs = history.items.slice().reverse().filter(msg => msg.name === 'time-update');
         let lastTimeForVideo = null;
         if (timeUpdateMsgs.length > 0) {
-            // Get most recent for current video, or most recent overall
-            const relevantTimes = timeUpdateMsgs.filter(m => m.data && m.data.videoId === currentVideoId);
-            if (relevantTimes.length > 0) {
-                lastTimeForVideo = relevantTimes[0];
-            } else {
-                lastTimeForVideo = timeUpdateMsgs[0];
+            if (currentVideoId) {
+                lastTimeForVideo = timeUpdateMsgs.find(m => m.data && m.data.videoId === currentVideoId);
             }
+            if (!lastTimeForVideo) lastTimeForVideo = timeUpdateMsgs[0];
         }
 
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
@@ -171,10 +172,36 @@ async function main() {
         }
     } catch (err) { console.error("Could not retrieve channel history:", err); }
 
-    await channel.presence.enter({ nickname: NICKNAME });
+    // --- FIX: Logic to ensure only one admin ---
+    const presenceData = { nickname: NICKNAME };
+    if (IS_ADMIN_FLAG) {
+        presenceData.isAdmin = true;
+    }
+    await channel.presence.enter(presenceData);
+
+    if (IS_ADMIN_FLAG) {
+        setTimeout(async () => {
+            try {
+                const members = await channel.presence.get();
+                const admins = members.filter(m => m.data.isAdmin);
+
+                if (admins.length > 1) {
+                    admins.sort((a, b) => a.timestamp - b.timestamp);
+                    const rightfulAdmin = admins[0];
+                    if (rightfulAdmin.clientId !== CLIENT_ID) {
+                        alert("An admin is already present in this room. You will be connected as a viewer.");
+                        window.location.href = `/join/${ROOM_ID}`;
+                        return; // Stop execution
+                    }
+                }
+            } catch (err) { console.error("Failed to verify admin status:", err); }
+        }, 500);
+    }
+    
     channel.subscribe(handleAblyMessages);
     channel.presence.subscribe(['enter', 'leave', 'update'], updateParticipantList);
     updateParticipantList();
+
     if (!IS_ADMIN_FLAG) {
         if (waitingOverlay) waitingOverlay.style.display = 'flex';
         requestToJoinWithRetry();
@@ -195,7 +222,8 @@ function handleAblyMessages(message) {
         case 'sync-request': if (IS_ADMIN_FLAG) handleSyncRequest(message.data); break;
         case 'sync-response': if (message.data.targetClientId === CLIENT_ID) handleSync(message.data); break;
         case 'kick-user': if (message.data.kickedClientId === CLIENT_ID) handleKick(); break;
-        case 'chat-message': displayChatMessage(message.data.nickname, message.data.text, message.data.isSystem); break;
+        // Pass clientId to chat handler for notification logic
+        case 'chat-message': displayChatMessage(message.data.nickname, message.data.text, message.data.isSystem, message.clientId); break;
         case 'add-to-queue': if (IS_ADMIN_FLAG) handleAddToQueue(message.data); break;
         case 'queue-updated': handleQueueUpdated(message.data); break;
         case 'now-playing-updated': handleNowPlayingUpdated(message.data); break;
@@ -258,18 +286,7 @@ function handleNowPlayingUpdated({ item }) {
     if (item && item.videoId) currentVideoId = item.videoId;
     renderNowPlaying();
     updateBackgroundColor(item ? item.thumbnail : null);
-
-    // ✅ Save the latest now-playing info in localStorage
-    try {
-        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({
-            videoId: currentVideoId,
-            time: 0 // start from beginning for new song
-        }));
-    } catch (e) {
-        console.warn("Could not save now playing:", e);
-    }
 }
-
 function renderQueue() {
     if (!queueListContainer) return;
     queueListContainer.innerHTML = '';
@@ -293,18 +310,7 @@ function playItemNow(item) {
     channel.publish('chat-message', { nickname: 'System', text: `Now playing "${item.title}" (added by ${item.addedBy})`, isSystem: true });
     channel.publish('now-playing-updated', { item: item });
     channel.publish('set-video', { videoId: item.videoId });
-
-    // ✅ Persist in localStorage
-    try {
-        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({
-            videoId: item.videoId,
-            time: 0
-        }));
-    } catch (e) {
-        console.warn("Could not save play-now state:", e);
-    }
 }
-
 
 function playNextInQueue() {
     if (!IS_ADMIN_FLAG) return;
@@ -328,13 +334,22 @@ function sendChatMessage() {
     sendChatBtn.disabled = true;
     setTimeout(() => { sendChatBtn.disabled = false; }, 2000);
 }
-function displayChatMessage(nickname, text, isSystem = false) {
+// --- UPDATED: Now accepts clientId for notification logic ---
+function displayChatMessage(nickname, text, isSystem = false, clientId) {
     const isAdminMessage = nickname.toLowerCase() === 'admin';
     const messageEl = document.createElement('div');
-    if (isSystem) { messageEl.innerHTML = `<p class="text-sm text-purple-300 italic">${text}</p>`;
-    } else { messageEl.innerHTML = `<p class="text-sm"><strong class="${isAdminMessage ? 'text-purple-400' : 'text-blue-300'}">${nickname}:</strong> <span class="text-gray-200">${text}</span></p>`; }
+    if (isSystem) {
+        messageEl.innerHTML = `<p class="text-sm text-purple-300 italic">${text}</p>`;
+    } else {
+        messageEl.innerHTML = `<p class="text-sm"><strong class="${isAdminMessage ? 'text-purple-400' : 'text-blue-300'}">${nickname}:</strong> <span class="text-gray-200">${text}</span></p>`;
+    }
     chatMessagesContainer.appendChild(messageEl);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+
+    // --- NEW: Play notification sound for incoming messages ---
+    if (!isSystem && clientId !== CLIENT_ID && !areNotificationsMuted) {
+        chatNotificationSound.play().catch(e => console.warn("Could not play notification sound:", e));
+    }
 }
 
 // --- Participant & Admin Logic ---
@@ -343,9 +358,12 @@ async function updateParticipantList() {
     const members = await channel.presence.get();
     participantCount.textContent = members.length;
     userListContainer.innerHTML = '';
+    // Sort to show admin first
+    members.sort((a, b) => (b.data.isAdmin ? 1 : 0) - (a.data.isAdmin ? 1 : 0));
+
     members.forEach(member => {
         const displayName = member.data ? member.data.nickname : member.clientId; 
-        const isAdmin = member.clientId === 'admin-client';
+        const isAdmin = member.data.isAdmin;
         const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" title="Kick User" class="kick-btn p-1 text-red-400 hover:text-red-200">🚫</button>` : '';
         const promoteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-promote-id="${member.clientId}" title="Make Admin" class="promote-btn p-1 text-yellow-400 hover:text-yellow-200">👑</button>` : '';
         const adminTagHTML = isAdmin ? `<span class="text-xs font-bold text-purple-400">[Admin]</span>` : '';
@@ -409,28 +427,16 @@ function handleRoomEnded(data) { alert(data.message); ably.close(); window.locat
 
 // --- Real-time Video Control Handlers ---
 function handleSetVideo(data) {
-    currentVideoId = data.videoId;
-    lastPlayerState = -1;
+    currentVideoId = data.videoId; lastPlayerState = -1;
     lastKnownTime = 0;
-
-    // ✅ Save immediately
-    try {
-        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({
-            videoId: currentVideoId,
-            time: 0
-        }));
-    } catch (e) {
-        console.warn("Could not save set-video state:", e);
+    if (IS_ADMIN_FLAG) {
+        try {
+            localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: data.videoId, time: 0 }));
+        } catch (e) { /* ignore localStorage failures */ }
     }
-
-    if (player && typeof player.loadVideoById === 'function') {
-        isEventFromAbly = true;
-        player.loadVideoById(currentVideoId);
-    } else if (isYouTubeApiReady) {
-        createPlayer(currentVideoId);
-    }
+    if (player && typeof player.loadVideoById === 'function') { isEventFromAbly = true; player.loadVideoById(currentVideoId);
+    } else if (isYouTubeApiReady) { createPlayer(currentVideoId); }
 }
-
 function handlePlay(data) { if (!player) return; isEventFromAbly = true; player.seekTo(data.currentTime, true); player.playVideo(); }
 function handlePause() { if (!player) return; isEventFromAbly = true; player.pauseVideo(); }
 
@@ -448,22 +454,13 @@ function createPlayer(videoId, onReadyCallback) {
             } else {
                 player.seekTo(lastKnownTime || 0, true);
             }
-        } catch (e) {
-            console.warn("Error reusing player, creating a new one:", e);
-        }
+        } catch (e) { console.warn("Error reusing player:", e); }
         if (onReadyCallback) onReadyCallback();
         return;
     }
-
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
-        playerVars: { 
-            playsinline: 1, 
-            autoplay: 0, 
-            controls: IS_ADMIN_FLAG ? 1 : 0, 
-            origin: window.location.origin,
-            enablejsapi: 1
-        },
+        playerVars: { playsinline: 1, autoplay: 0, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin },
         events: { 'onReady': (event) => {
             try {
                 if (lastKnownTime && lastKnownTime > 0) {
@@ -474,9 +471,7 @@ function createPlayer(videoId, onReadyCallback) {
                     }
                 }
             } catch (e) { console.warn("Error seeking on ready:", e); }
-            if (IS_ADMIN_FLAG && nowPlayingItem) {
-                event.target.playVideo();
-            }
+            if (IS_ADMIN_FLAG && nowPlayingItem) { event.target.playVideo(); }
             if (onReadyCallback) onReadyCallback(event);
         }, 'onStateChange': onPlayerStateChange }
     });
@@ -488,15 +483,9 @@ function onPlayerStateChange(event) {
     if (event.data === lastPlayerState) return;
     lastPlayerState = event.data;
     switch (event.data) {
-        case YT.PlayerState.PLAYING:
-            channel.publish('play', { currentTime: player.getCurrentTime() });
-            break;
-        case YT.PlayerState.PAUSED:
-            channel.publish('pause', {});
-            break;
-        case YT.PlayerState.ENDED:
-            playNextInQueue();
-            break;
+        case YT.PlayerState.PLAYING: channel.publish('play', { currentTime: player.getCurrentTime() }); break;
+        case YT.PlayerState.PAUSED: channel.publish('pause', {}); break;
+        case YT.PlayerState.ENDED: playNextInQueue(); break;
     }
 }
 
@@ -507,44 +496,36 @@ function extractVideoID(url) {
 }
 
 // --- Event Listeners ---
-if (copyRoomIdBtn && roomIdText && copyFeedback) {
+if (copyRoomIdBtn) {
     copyRoomIdBtn.addEventListener('click', () => {
         const roomId = roomIdText.textContent;
         navigator.clipboard.writeText(roomId).then(() => {
             copyFeedback.style.opacity = '1';
-            setTimeout(() => {
-                copyFeedback.style.opacity = '0';
-            }, 2000);
-        }).catch(err => {
-            console.error('Failed to copy room ID: ', err);
-            alert('Could not copy Room ID.');
-        });
+            setTimeout(() => { copyFeedback.style.opacity = '0'; }, 2000);
+        }).catch(err => { console.error('Failed to copy room ID: ', err); });
     });
 }
-
 addToQueueBtn.addEventListener('click', async () => {
     addToQueueBtn.disabled = true;
     const newItem = await getVideoItemFromUrl();
     if (newItem) { channel.publish('add-to-queue', newItem); }
     addToQueueBtn.disabled = false;
 });
-
 if (IS_ADMIN_FLAG) {
     userListContainer.addEventListener('click', (e) => {
         const kickBtn = e.target.closest('.kick-btn');
         const promoteBtn = e.target.closest('.promote-btn');
         if (kickBtn) { 
             const clientIdToKick = kickBtn.dataset.kickId; 
-            if (clientIdToKick && confirm("Are you sure you want to kick this user?")) kickUser(clientIdToKick); 
+            if (clientIdToKick && confirm("Kick this user?")) kickUser(clientIdToKick); 
         }
         if (promoteBtn) {
             const clientIdToPromote = promoteBtn.dataset.promoteId;
-            if (clientIdToPromote && confirm("Are you sure you want to make this user the new admin? You will become a viewer.")) {
+            if (clientIdToPromote && confirm("Make this user the new admin? You will become a viewer.")) {
                 channel.publish('promote-to-admin', { newAdminClientId: clientIdToPromote });
             }
         }
     });
-    
     queueListContainer.addEventListener('click', (e) => {
         const removeBtn = e.target.closest('.remove-queue-btn');
         if (removeBtn) {
@@ -553,16 +534,14 @@ if (IS_ADMIN_FLAG) {
             channel.publish('queue-updated', { queue: videoQueue });
         }
     });
-
     playImmediatelyBtn.addEventListener('click', async () => {
         playImmediatelyBtn.disabled = true;
         const newItem = await getVideoItemFromUrl();
         if (newItem) { playItemNow(newItem); }
         playImmediatelyBtn.disabled = false;
     });
-
     endRoomBtn.addEventListener('click', () => {
-        if (confirm("Are you sure you want to end the session for everyone?")) {
+        if (confirm("End the session for everyone?")) {
             channel.publish('room-ended', { message: 'The admin has ended the session.' });
             setTimeout(() => { ably.close(); window.location.href = '/'; }, 500);
         }
@@ -571,23 +550,21 @@ if (IS_ADMIN_FLAG) {
     leaveRoomBtn.addEventListener('click', () => { ably.close(); window.location.href = '/'; });
     changeNameBtn.addEventListener('click', async () => {
         const newName = prompt("Enter your new name:", NICKNAME);
-        if (isNameValid(newName)) {
+        if (newName && newName.trim() !== '' && newName.trim() !== NICKNAME) {
             const oldName = NICKNAME;
             NICKNAME = newName.trim();
             await channel.presence.update({ nickname: NICKNAME });
-            displayChatMessage('System', `"${oldName}" is now known as "${NICKNAME}"`, true);
+            channel.publish('chat-message', { nickname: 'System', text: `"${oldName}" is now known as "${NICKNAME}"`, isSystem: true });
         }
     });
-    
     if(syncRoomBtn) {
         syncRoomBtn.addEventListener('click', () => {
             displayChatMessage('System', 'Re-syncing with the room...', true);
             channel.publish('sync-request', { requesterClientId: CLIENT_ID });
         });
     }
-
     if (fullscreenBtn && playerWrapper) { fullscreenBtn.addEventListener('click', () => { if (playerWrapper.requestFullscreen) { playerWrapper.requestFullscreen(); } else if (playerWrapper.webkitRequestFullscreen) { playerWrapper.webkitRequestFullscreen(); } }); }
-    if (muteBtn && volumeSlider && volumeOnIcon && volumeOffIcon) {
+    if (muteBtn && volumeSlider) {
         muteBtn.addEventListener('click', () => {
             if (player.isMuted()) { player.unMute(); player.setVolume(lastVolume); volumeSlider.value = lastVolume; volumeOnIcon.classList.remove('hidden'); volumeOffIcon.classList.add('hidden');
             } else { lastVolume = player.getVolume(); player.mute(); volumeSlider.value = 0; volumeOnIcon.classList.add('hidden'); volumeOffIcon.classList.remove('hidden'); }
@@ -596,43 +573,60 @@ if (IS_ADMIN_FLAG) {
             const newVolume = e.target.value;
             player.setVolume(newVolume); lastVolume = newVolume;
             if (newVolume > 0 && player.isMuted()) { player.unMute(); volumeOnIcon.classList.remove('hidden'); volumeOffIcon.classList.add('hidden');
-            } else if (newVolume == 0 && !player.isMuted()) { player.mute(); volumeOnIcon.classList.add('hidden'); volumeOffIcon.remove('hidden'); }
+            } else if (newVolume == 0 && !player.isMuted()) { player.mute(); volumeOnIcon.classList.add('hidden'); volumeOffIcon.classList.remove('hidden'); }
         });
     }
 }
 sendChatBtn.addEventListener('click', sendChatMessage);
 chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendChatMessage(); });
 
-// --- Admin periodic time broadcast and local persistence ---
+// --- Admin periodic time broadcast ---
 let adminBroadcastIntervalId = null;
 function startAdminTimeBroadcast() {
     if (!IS_ADMIN_FLAG) return;
-    if (adminBroadcastIntervalId) return;
     adminBroadcastIntervalId = setInterval(() => {
-        if (!player) return;
-        try {
-            if (player.getPlayerState() === YT.PlayerState.PLAYING) {
+        if (player && typeof player.getPlayerState === 'function' && player.getPlayerState() === YT.PlayerState.PLAYING) {
+            try {
                 const t = player.getCurrentTime();
-                currentVideoId = player.getVideoData().video_id || currentVideoId;
-                channel.publish('time-update', { videoId: currentVideoId, currentTime: t });
-                try {
+                const videoId = player.getVideoData().video_id;
+                if (videoId) {
+                    currentVideoId = videoId;
+                    channel.publish('time-update', { videoId: currentVideoId, currentTime: t });
                     localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: currentVideoId, time: t }));
-                } catch (e) { /* ignore localStorage failures */ }
-            }
-        } catch (e) { }
+                }
+            } catch (e) { /* ignore errors */ }
+        }
     }, 5000);
 }
-function stopAdminTimeBroadcast() {
-    if (adminBroadcastIntervalId) {
-        clearInterval(adminBroadcastIntervalId);
-        adminBroadcastIntervalId = null;
+
+// --- NEW: Notification Control Logic ---
+function initNotificationControls() {
+    const savedPref = localStorage.getItem('notificationsMuted');
+    if (savedPref === 'true') {
+        areNotificationsMuted = true;
+        notificationsOnIcon.classList.add('hidden');
+        notificationsOffIcon.classList.remove('hidden');
+        toggleNotificationsBtn.setAttribute('title', 'Unmute Notifications');
     }
+
+    toggleNotificationsBtn.addEventListener('click', () => {
+        areNotificationsMuted = !areNotificationsMuted;
+        localStorage.setItem('notificationsMuted', areNotificationsMuted);
+        if (areNotificationsMuted) {
+            notificationsOnIcon.classList.add('hidden');
+            notificationsOffIcon.classList.remove('hidden');
+            toggleNotificationsBtn.setAttribute('title', 'Unmute Notifications');
+        } else {
+            notificationsOnIcon.classList.remove('hidden');
+            notificationsOffIcon.classList.add('hidden');
+            toggleNotificationsBtn.setAttribute('title', 'Mute Notifications');
+        }
+    });
 }
 
 // --- Emoji Picker Logic ---
 function initEmojiPicker() {
     const emojis = ['😀', '😂', '😍', '🤔', '😎', '😢', '🔥', '❤️', '👍', '👎', '🎉', '🚀', '💯', '👏', '👀', '🍿'];
-    
     emojis.forEach(emoji => {
         const button = document.createElement('button');
         button.className = 'p-1 text-2xl rounded-md hover:bg-gray-700 transition-colors';
@@ -644,12 +638,10 @@ function initEmojiPicker() {
         });
         emojiPicker.appendChild(button);
     });
-
     emojiBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         emojiPicker.classList.toggle('hidden');
     });
-
     document.addEventListener('click', (e) => {
         if (!emojiPicker.contains(e.target) && !emojiBtn.contains(e.target)) {
             emojiPicker.classList.add('hidden');
@@ -660,3 +652,4 @@ function initEmojiPicker() {
 // --- Startup ---
 main();
 initEmojiPicker();
+initNotificationControls();
