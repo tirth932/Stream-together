@@ -64,6 +64,8 @@ let lastKnownTime = 0;
 // --- UPDATED: Notification State ---
 let areNotificationsMuted = false;
 let hasInteracted = false; // For fixing audio playback
+let unreadCount = 0; // For tracking unread messages when tab is hidden
+
 
 // --- Helper Functions ---
 function isNameValid(name) {
@@ -324,9 +326,10 @@ function displayChatMessage(data, clientId) {
     chatMessagesContainer.appendChild(messageEl);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 
-    // --- NEW: Notification Logic ---
+    // --- UPDATED: Enhanced Notification Logic ---
     const isMyOwnMessage = (clientId === CLIENT_ID);
     if (!isSystem && !isMyOwnMessage && !areNotificationsMuted) {
+        unreadCount++;
         // Play sound if user has interacted with the page
         if (hasInteracted) {
             chatNotificationSound.play().catch(e => console.warn("Could not play notification sound:", e.message));
@@ -339,6 +342,28 @@ function displayChatMessage(data, clientId) {
             });
         }
     }
+}
+
+// --- Toast Notification Function ---
+function showToast(message, type = 'info', duration = 3000) {
+    const toast = document.createElement('div');
+    toast.className = `p-4 rounded-lg shadow-lg transform transition-all duration-300 ease-in-out fixed top-4 right-4 z-50 ${type === 'error' ? 'bg-red-500 text-white' : 'bg-purple-500/90 text-white backdrop-blur-sm'}`;
+    toast.style.transform = 'translateX(100%)';
+    toast.textContent = message;
+
+    document.body.appendChild(toast); // Append directly to body since container might not be available
+
+    // Animate in
+    requestAnimationFrame(() => {
+        toast.style.transform = 'translateX(0)';
+    });
+
+    setTimeout(() => {
+        toast.style.transform = 'translateX(100%)';
+        setTimeout(() => {
+            document.body.removeChild(toast);
+        }, 300);
+    }, duration);
 }
 
 // --- Participant & Admin Logic ---
@@ -601,6 +626,14 @@ function initNotificationControls() {
     document.body.addEventListener('click', () => {
         hasInteracted = true;
     }, { once: true });
+
+    // --- NEW: Visibility change for toast on tab focus ---
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && unreadCount > 0) {
+            showToast(`You have ${unreadCount} new messages`, 'info', 4000);
+            unreadCount = 0;
+        }
+    });
 }
 
 // --- Emoji Picker Logic ---
