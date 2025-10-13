@@ -566,33 +566,41 @@ addToQueueBtn.addEventListener('click', async () => {
     if (newItem) { channel.publish('add-to-queue', newItem); }
     addToQueueBtn.disabled = false;
 });
+
 if (IS_ADMIN_FLAG) {
     userListContainer.addEventListener('click', (e) => {
         const kickBtn = e.target.closest('.kick-btn');
+        const promoteBtn = e.target.closest('.promote-btn');
+        const notifBtn = e.target.closest('.notif-btn');
+
         if (kickBtn && confirm("Are you sure you want to kick this user?")) {
             kickUser(kickBtn.dataset.kickId);
-            // We refresh the list to reflect the change immediately
-            setTimeout(updateParticipantList, 500); 
         }
 
-        const promoteBtn = e.target.closest('.promote-btn');
         if (promoteBtn && confirm("Are you sure you want to make this user the new admin?")) {
             channel.publish('promote-to-admin', { newAdminClientId: promoteBtn.dataset.promoteId });
         }
 
-        const notifBtn = e.target.closest('.notif-btn');
         if (notifBtn) {
-            // This sends the command to the user's client, telling it to toggle its mute state.
+            // Send the command to the user in the background
             channel.publish('toggle-user-notifications', { targetClientId: notifBtn.dataset.notifId });
-            
-            // --- RELIABILITY FIX ---
-            // We force a refresh of the participant list after a short delay.
-            // This ensures the admin's UI will always reflect the change,
-            // even if there's a slight lag in the user's presence update.
+
+            // OPTIMISTIC UI UPDATE: Update the icon instantly for the admin.
             showToast('User notification preference updated.', 'info', 2000);
-            setTimeout(updateParticipantList, 500); 
+            if (notifBtn.textContent === '🔔') {
+                // Change icon to muted
+                notifBtn.textContent = '🔕';
+                notifBtn.classList.remove('text-gray-400');
+                notifBtn.classList.add('text-red-400');
+            } else {
+                // Change icon to unmuted
+                notifBtn.textContent = '🔔';
+                notifBtn.classList.remove('text-red-400');
+                notifBtn.classList.add('text-gray-400');
+            }
         }
     });
+
     queueListContainer.addEventListener('click', (e) => {
         const removeBtn = e.target.closest('.remove-queue-btn');
         if (removeBtn) {
