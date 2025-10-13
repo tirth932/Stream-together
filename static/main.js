@@ -94,7 +94,7 @@ function getIdentity() {
             const name = nameInput.value.trim();
             if (isNameValid(name)) {
                 NICKNAME = name;
-                if (IS_ADMIN_FLAG) { CLIENT_ID = `admin-${Math.random().toString(36).substring(2, 10)}`; } 
+                if (IS_ADMIN_FLAG) { CLIENT_ID = `admin-${Math.random().toString(36).substring(2, 10)}`; }
                 else { CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`; }
                 nameModalContent.style.transform = 'scale(0.95)';
                 nameModalContent.style.opacity = '0';
@@ -114,11 +114,11 @@ let ably, channel;
 async function main() {
     await getIdentity();
     initNotificationControls();
-    
+
     if (Notification.permission === 'default') {
         Notification.requestPermission();
     }
-    
+
     try {
         const saved = localStorage.getItem(`lastVideoState_${ROOM_ID}`);
         if (saved) {
@@ -153,11 +153,11 @@ async function main() {
                 lastKnownTime = lastTimeForVideo.data.currentTime || lastKnownTime;
             }
             if (nowPlayingItem) {
-                if (isYouTubeApiReady) { createPlayer(nowPlayingItem.videoId); } 
+                if (isYouTubeApiReady) { createPlayer(nowPlayingItem.videoId); }
                 else { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(nowPlayingItem.videoId); }; }
             }
         } else if (currentVideoId) {
-            if (isYouTubeApiReady) { createPlayer(currentVideoId); } 
+            if (isYouTubeApiReady) { createPlayer(currentVideoId); }
             else { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(currentVideoId); }; }
         }
     } catch (err) { console.error("Could not retrieve channel history:", err); }
@@ -181,7 +181,7 @@ async function main() {
             } catch (err) { console.error("Failed to verify admin status:", err); }
         }, 1000);
     }
-    
+
     channel.subscribe(handleAblyMessages);
     channel.presence.subscribe(['enter', 'leave', 'update'], updateParticipantList);
     updateParticipantList();
@@ -206,7 +206,7 @@ function handleAblyMessages(message) {
         case 'sync-request': if (IS_ADMIN_FLAG) handleSyncRequest(message.data); break;
         case 'sync-response': if (message.data.targetClientId === CLIENT_ID) handleSync(message.data); break;
         case 'kick-user': if (message.data.kickedClientId === CLIENT_ID) handleKick(); break;
-        case 'chat-message': 
+        case 'chat-message':
             if (message.clientId !== CLIENT_ID) {
                 displayChatMessage(message.data, message.clientId);
             }
@@ -314,6 +314,15 @@ function renderNowPlaying() {
 
 function playItemNow(item) {
     if (!IS_ADMIN_FLAG || !item) return;
+
+    // FIX: Immediately save the new video state to localStorage
+    try {
+        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: item.videoId, time: 0 }));
+    } catch (e) {
+        console.warn("Could not save new video state:", e);
+    }
+
+    handleNowPlayingUpdated({ item: item });
     channel.publish('chat-message', { nickname: 'System', text: `Now playing "${item.title}" (added by ${item.addedBy})`, isSystem: true });
     channel.publish('now-playing-updated', { item: item });
     channel.publish('set-video', { videoId: item.videoId });
@@ -326,6 +335,7 @@ function playNextInQueue() {
         playItemNow(nextItem);
         channel.publish('queue-updated', { queue: videoQueue });
     } else {
+        handleNowPlayingUpdated({ item: null });
         channel.publish('now-playing-updated', { item: null });
         console.log("Queue finished.");
     }
@@ -398,17 +408,17 @@ function showToast(message, type = 'info', duration = 3000) {
 
 // --- Participant & Admin Logic ---
 async function updateParticipantList() {
-    if (isUpdatingList) return; 
+    if (isUpdatingList) return;
     isUpdatingList = true;
 
     try {
         if (!userListContainer || !participantCount) return;
-        
+
         const members = await channel.presence.get();
         participantCount.textContent = members.length;
         userListContainer.innerHTML = '';
         members.sort((a, b) => (b.data.isAdmin ? 1 : 0) - (a.data.isAdmin ? 1 : 0));
-        
+
         members.forEach(member => {
             const displayName = member.data.nickname;
             const isAdmin = member.data.isAdmin;
@@ -433,7 +443,7 @@ function handleJoinRequest(data) { channel.publish('approve-join', { approvedCli
 function kickUser(clientId) { if (!IS_ADMIN_FLAG) return; channel.publish('kick-user', { kickedClientId: clientId }); }
 function handlePromotion(data) {
     alert("Admin role is being transferred. The room will now reload.");
-    if (data.newAdminClientId === CLIENT_ID) { window.location.href = `/admin/${ROOM_ID}`; } 
+    if (data.newAdminClientId === CLIENT_ID) { window.location.href = `/admin/${ROOM_ID}`; }
     else { window.location.href = `/join/${ROOM_ID}`; }
 }
 
@@ -451,13 +461,13 @@ function handleSync(data) {
         if (data.videoId) {
             isResyncing = true;
             lastKnownTime = data.currentTime || 0;
-            if (player.getVideoData().video_id === data.videoId) { player.seekTo(data.currentTime, true); } 
+            if (player.getVideoData().video_id === data.videoId) { player.seekTo(data.currentTime, true); }
             else { player.loadVideoById(data.videoId, data.currentTime); }
             if (data.state === YT.PlayerState.PLAYING) player.playVideo(); else player.pauseVideo();
         }
     };
-    if (!isYouTubeApiReady) { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(data.videoId, applyVideoSync); }; } 
-    else if (!player) { createPlayer(data.videoId, applyVideoSync); } 
+    if (!isYouTubeApiReady) { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(data.videoId, applyVideoSync); }; }
+    else if (!player) { createPlayer(data.videoId, applyVideoSync); }
     else { applyVideoSync(); }
 }
 function requestToJoinWithRetry() {
@@ -483,10 +493,10 @@ function handleSetVideo(data) {
     currentVideoId = data.videoId; lastPlayerState = -1;
     lastKnownTime = 0;
     if (IS_ADMIN_FLAG) {
-        try { localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: data.videoId, time: 0 })); } 
+        try { localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: data.videoId, time: 0 })); }
         catch (e) { console.warn("Could not save set-video state:", e); }
     }
-    if (player && typeof player.loadVideoById === 'function') { isEventFromAbly = true; player.loadVideoById(currentVideoId); } 
+    if (player && typeof player.loadVideoById === 'function') { isEventFromAbly = true; player.loadVideoById(currentVideoId); }
     else if (isYouTubeApiReady) { createPlayer(currentVideoId); }
 }
 function handlePlay(data) { if (!player) return; isEventFromAbly = true; player.seekTo(data.currentTime, true); player.playVideo(); }
@@ -501,7 +511,7 @@ function onYouTubeIframeAPIReady() { isYouTubeApiReady = true; }
 function createPlayer(videoId, onReadyCallback) {
     if (player) {
         try {
-            if (player.getVideoData().video_id !== videoId) { player.loadVideoById(videoId, lastKnownTime || 0); } 
+            if (player.getVideoData().video_id !== videoId) { player.loadVideoById(videoId, lastKnownTime || 0); }
             else { player.seekTo(lastKnownTime || 0, true); }
         } catch (e) { console.warn("Error reusing player:", e); }
         if (onReadyCallback) onReadyCallback();
@@ -513,11 +523,10 @@ function createPlayer(videoId, onReadyCallback) {
         events: { 'onReady': (event) => {
             try {
                 if (lastKnownTime && lastKnownTime > 0) {
-                    if (event.target.getVideoData().video_id === videoId) { event.target.seekTo(lastKnownTime, true); } 
+                    if (event.target.getVideoData().video_id === videoId) { event.target.seekTo(lastKnownTime, true); }
                     else { event.target.loadVideoById(videoId, lastKnownTime); }
                 }
             } catch (e) { console.warn("Error seeking on ready:", e); }
-            // FIX: If a video is loaded, it should play for everyone, not just the admin.
             if (nowPlayingItem) { event.target.playVideo(); }
             if (onReadyCallback) onReadyCallback(event);
         }, 'onStateChange': onPlayerStateChange }
@@ -573,18 +582,13 @@ if (IS_ADMIN_FLAG) {
         }
 
         if (notifBtn) {
-            // Send the command to the user in the background
             channel.publish('toggle-user-notifications', { targetClientId: notifBtn.dataset.notifId });
-
-            // OPTIMISTIC UI UPDATE: Update the icon instantly for the admin.
             showToast('User notification preference updated.', 'info', 2000);
             if (notifBtn.textContent === '🔔') {
-                // Change icon to muted
                 notifBtn.textContent = '🔕';
                 notifBtn.classList.remove('text-gray-400');
                 notifBtn.classList.add('text-red-400');
             } else {
-                // Change icon to unmuted
                 notifBtn.textContent = '🔔';
                 notifBtn.classList.remove('text-red-400');
                 notifBtn.classList.add('text-gray-400');
@@ -678,7 +682,7 @@ function initNotificationControls() {
         areNotificationsMuted = !areNotificationsMuted;
         localStorage.setItem('notificationsMuted', areNotificationsMuted.toString());
         channel.presence.update({ nickname: NICKNAME, notificationsMuted: areNotificationsMuted });
-        
+
         if (areNotificationsMuted) {
             notificationsOnIcon.classList.add('hidden');
             notificationsOffIcon.classList.remove('hidden');
