@@ -61,6 +61,7 @@ let nowPlayingItem = null;
 const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)';
 let isResyncing = false;
 let lastKnownTime = 0;
+let isUpdatingList = false; // <-- FIX ADDED: Guard for participant list updates
 // Notification State
 let areNotificationsMuted = false;
 let hasInteracted = false; // For fixing audio playback
@@ -407,25 +408,36 @@ function showToast(message, type = 'info', duration = 3000) {
 
 // --- Participant & Admin Logic ---
 async function updateParticipantList() {
-    if (!userListContainer || !participantCount) return;
-    const members = await channel.presence.get();
-    participantCount.textContent = members.length;
-    userListContainer.innerHTML = '';
-    members.sort((a, b) => (b.data.isAdmin ? 1 : 0) - (a.data.isAdmin ? 1 : 0));
-    members.forEach(member => {
-        const displayName = member.data.nickname; 
-        const isAdmin = member.data.isAdmin;
-        const notificationsMuted = member.data.notificationsMuted || false;
-        const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" title="Kick User" class="kick-btn p-1 text-red-400 hover:text-red-200">🚫</button>` : '';
-        const promoteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-promote-id="${member.clientId}" title="Make Admin" class="promote-btn p-1 text-yellow-400 hover:text-yellow-200">👑</button>` : '';
-        const notificationIcon = notificationsMuted ? '🔕' : '🔔';
-        const notificationButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-notif-id="${member.clientId}" title="Toggle User Notifications" class="notif-btn p-1 ${notificationsMuted ? 'text-red-400' : 'text-gray-400'} hover:text-purple-400 transition-colors">${notificationIcon}</button>` : '';
-        const adminTagHTML = isAdmin ? `<span class="text-xs font-bold text-purple-400">[Admin]</span>` : '';
-        const userEl = document.createElement('div');
-        userEl.className = 'flex justify-between items-center bg-gray-800 p-2 rounded';
-        userEl.innerHTML = `<div class="flex items-center gap-2"><span class="text-gray-300">${displayName}</span>${adminTagHTML}</div><div class="flex items-center gap-2">${promoteButtonHTML}${notificationButtonHTML}${kickButtonHTML}</div>`;
-        userListContainer.appendChild(userEl);
-    });
+    if (isUpdatingList) return; // Prevent the function from running if it's already active
+    isUpdatingList = true;
+
+    try {
+        if (!userListContainer || !participantCount) return;
+        
+        const members = await channel.presence.get();
+        participantCount.textContent = members.length;
+        userListContainer.innerHTML = '';
+        members.sort((a, b) => (b.data.isAdmin ? 1 : 0) - (a.data.isAdmin ? 1 : 0));
+        
+        members.forEach(member => {
+            const displayName = member.data.nickname;
+            const isAdmin = member.data.isAdmin;
+            const notificationsMuted = member.data.notificationsMuted || false;
+            const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" title="Kick User" class="kick-btn p-1 text-red-400 hover:text-red-200">🚫</button>` : '';
+            const promoteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-promote-id="${member.clientId}" title="Make Admin" class="promote-btn p-1 text-yellow-400 hover:text-yellow-200">👑</button>` : '';
+            const notificationIcon = notificationsMuted ? '🔕' : '🔔';
+            const notificationButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-notif-id="${member.clientId}" title="Toggle User Notifications" class="notif-btn p-1 ${notificationsMuted ? 'text-red-400' : 'text-gray-400'} hover:text-purple-400 transition-colors">${notificationIcon}</button>` : '';
+            const adminTagHTML = isAdmin ? `<span class="text-xs font-bold text-purple-400">[Admin]</span>` : '';
+            const userEl = document.createElement('div');
+            userEl.className = 'flex justify-between items-center bg-gray-800 p-2 rounded';
+            userEl.innerHTML = `<div class="flex items-center gap-2"><span class="text-gray-300">${displayName}</span>${adminTagHTML}</div><div class="flex items-center gap-2">${promoteButtonHTML}${notificationButtonHTML}${kickButtonHTML}</div>`;
+            userListContainer.appendChild(userEl);
+        });
+    } catch (error) {
+        console.error("Error updating participant list:", error);
+    } finally {
+        isUpdatingList = false; // Release the lock so the function can run again
+    }
 }
 function handleJoinRequest(data) { channel.publish('approve-join', { approvedClientId: data.clientId, approvedNickname: data.nickname }); }
 function kickUser(clientId) { if (!IS_ADMIN_FLAG) return; channel.publish('kick-user', { kickedClientId: clientId }); }
