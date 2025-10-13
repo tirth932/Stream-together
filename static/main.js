@@ -115,7 +115,6 @@ async function main() {
     await getIdentity();
     initNotificationControls();
     
-    // Request notification permission on load
     if (Notification.permission === 'default') {
         Notification.requestPermission();
     }
@@ -231,7 +230,6 @@ function handleAblyMessages(message) {
                 areNotificationsMuted = newMuted;
                 localStorage.setItem('notificationsMuted', newMuted.toString());
                 channel.presence.update({ nickname: NICKNAME, notificationsMuted: newMuted });
-                // Update UI
                 if (toggleNotificationsBtn) {
                     if (newMuted) {
                         notificationsOnIcon.classList.add('hidden');
@@ -338,7 +336,6 @@ function sendChatMessage() {
     const text = chatInput.value.trim();
     if (text === '') return;
     if (text.length > 280) { alert("Your message is too long (max 280 characters)."); return; }
-    // Display own message immediately for better UX
     displayChatMessage({ nickname: NICKNAME, text: text }, CLIENT_ID);
     channel.publish('chat-message', { nickname: NICKNAME, text: text });
     chatInput.value = '';
@@ -346,39 +343,33 @@ function sendChatMessage() {
     setTimeout(() => { sendChatBtn.disabled = false; }, 2000);
 }
 
-// --- displayChatMessage for WhatsApp-like UI and Notifications ---
 function displayChatMessage(data, clientId) {
     const { nickname, text, isSystem } = data;
     const isMyOwnMessage = (clientId === CLIENT_ID);
     const isAdminMessage = nickname && nickname.toLowerCase() === 'admin';
     const messageEl = document.createElement('div');
-    messageEl.className = 'flex space-y-2 mb-2'; // Adjusted spacing
+    messageEl.className = 'flex space-y-2 mb-2';
 
     if (isSystem) {
         messageEl.innerHTML = `<div class="flex justify-center"><div class="bg-purple-900/50 text-purple-300 italic px-4 py-2 rounded-full text-sm max-w-xs">${text}</div></div>`;
     } else if (isMyOwnMessage) {
-        // Own message: right-aligned, blue bubble
         messageEl.innerHTML = `<div class="flex justify-end"><div class="bg-blue-500 text-white px-4 py-2 rounded-lg rounded-tr-sm max-w-xs text-sm break-words">${text}</div></div>`;
     } else {
-        // Other message: left-aligned, gray bubble with name
         const nameColor = isAdminMessage ? 'text-purple-400' : 'text-blue-300';
         messageEl.innerHTML = `<div class="flex justify-start"><div class="bg-gray-700 text-white px-4 py-2 rounded-lg rounded-tl-sm max-w-xs text-sm"><div class="font-semibold ${nameColor} text-xs mb-1">${nickname}:</div><div class="text-gray-200">${text}</div></div></div>`;
     }
     chatMessagesContainer.appendChild(messageEl);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 
-    // Enhanced Notification Logic
     if (!isSystem && !isMyOwnMessage && !areNotificationsMuted) {
         unreadCount++;
-        // Play sound if user has interacted with the page
         if (hasInteracted) {
             chatNotificationSound.play().catch(e => console.warn("Could not play notification sound:", e.message));
         }
-        // Show browser notification if tab is hidden
         if (document.hidden && Notification.permission === 'granted') {
             new Notification(`${nickname}: ${text}`, {
                 body: `New message in room ${ROOM_ID}`,
-                icon: '/static/favicon.ico' // Optional: add a favicon
+                icon: '/static/favicon.ico'
             });
         }
     }
@@ -391,9 +382,8 @@ function showToast(message, type = 'info', duration = 3000) {
     toast.style.transform = 'translateX(100%)';
     toast.textContent = message;
 
-    document.body.appendChild(toast); // Append directly to body since container might not be available
+    document.body.appendChild(toast);
 
-    // Animate in
     requestAnimationFrame(() => {
         toast.style.transform = 'translateX(0)';
     });
@@ -527,7 +517,8 @@ function createPlayer(videoId, onReadyCallback) {
                     else { event.target.loadVideoById(videoId, lastKnownTime); }
                 }
             } catch (e) { console.warn("Error seeking on ready:", e); }
-            if (IS_ADMIN_FLAG && nowPlayingItem) { event.target.playVideo(); }
+            // FIX: If a video is loaded, it should play for everyone, not just the admin.
+            if (nowPlayingItem) { event.target.playVideo(); }
             if (onReadyCallback) onReadyCallback(event);
         }, 'onStateChange': onPlayerStateChange }
     });
@@ -699,12 +690,10 @@ function initNotificationControls() {
         }
     });
 
-    // This listener fixes the "audio not playing" bug
     document.body.addEventListener('click', () => {
         hasInteracted = true;
     }, { once: true });
 
-    // Visibility change for toast on tab focus
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && unreadCount > 0) {
             showToast(`You have ${unreadCount} new messages`, 'info', 4000);
