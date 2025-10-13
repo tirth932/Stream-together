@@ -61,7 +61,7 @@ let nowPlayingItem = null;
 const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)';
 let isResyncing = false;
 let lastKnownTime = 0;
-let isUpdatingList = false; // <-- FIX ADDED: Guard for participant list updates
+let isUpdatingList = false;
 // Notification State
 let areNotificationsMuted = false;
 let hasInteracted = false; // For fixing audio playback
@@ -230,7 +230,7 @@ function handleAblyMessages(message) {
                 const newMuted = !areNotificationsMuted;
                 areNotificationsMuted = newMuted;
                 localStorage.setItem('notificationsMuted', newMuted.toString());
-                channel.presence.update({ notificationsMuted: newMuted });
+                channel.presence.update({ nickname: NICKNAME, notificationsMuted: newMuted });
                 // Update UI
                 if (toggleNotificationsBtn) {
                     if (newMuted) {
@@ -350,7 +350,7 @@ function sendChatMessage() {
 function displayChatMessage(data, clientId) {
     const { nickname, text, isSystem } = data;
     const isMyOwnMessage = (clientId === CLIENT_ID);
-    const isAdminMessage = nickname.toLowerCase() === 'admin';
+    const isAdminMessage = nickname && nickname.toLowerCase() === 'admin';
     const messageEl = document.createElement('div');
     messageEl.className = 'flex space-y-2 mb-2'; // Adjusted spacing
 
@@ -408,7 +408,7 @@ function showToast(message, type = 'info', duration = 3000) {
 
 // --- Participant & Admin Logic ---
 async function updateParticipantList() {
-    if (isUpdatingList) return; // Prevent the function from running if it's already active
+    if (isUpdatingList) return; 
     isUpdatingList = true;
 
     try {
@@ -436,7 +436,7 @@ async function updateParticipantList() {
     } catch (error) {
         console.error("Error updating participant list:", error);
     } finally {
-        isUpdatingList = false; // Release the lock so the function can run again
+        isUpdatingList = false;
     }
 }
 function handleJoinRequest(data) { channel.publish('approve-join', { approvedClientId: data.clientId, approvedNickname: data.nickname }); }
@@ -571,7 +571,9 @@ if (IS_ADMIN_FLAG) {
         const kickBtn = e.target.closest('.kick-btn');
         const promoteBtn = e.target.closest('.promote-btn');
         const notifBtn = e.target.closest('.notif-btn');
-        if (kickBtn && confirm("Kick this user?")) { kickUser(kickBtn.dataset.kickId); }
+        if (kickBtn && confirm("Kick this user?")) { 
+            kickUser(kickBtn.dataset.kickId); 
+        }
         if (promoteBtn && confirm("Make this user the new admin?")) {
             channel.publish('promote-to-admin', { newAdminClientId: promoteBtn.dataset.promoteId });
         }
@@ -605,7 +607,7 @@ if (IS_ADMIN_FLAG) {
         if (isNameValid(newName)) {
             const oldName = NICKNAME;
             NICKNAME = newName.trim();
-            await channel.presence.update({ nickname: NICKNAME });
+            await channel.presence.update({ nickname: NICKNAME, notificationsMuted: areNotificationsMuted });
             displayChatMessage({ nickname: 'System', text: `"${oldName}" is now known as "${NICKNAME}"`, isSystem: true });
         }
     });
@@ -664,7 +666,7 @@ function initNotificationControls() {
     toggleNotificationsBtn.addEventListener('click', () => {
         areNotificationsMuted = !areNotificationsMuted;
         localStorage.setItem('notificationsMuted', areNotificationsMuted.toString());
-        channel.presence.update({ notificationsMuted: areNotificationsMuted });
+        channel.presence.update({ nickname: NICKNAME, notificationsMuted: areNotificationsMuted });
         
         if (areNotificationsMuted) {
             notificationsOnIcon.classList.add('hidden');
