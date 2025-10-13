@@ -16,6 +16,8 @@ const nowPlayingCard = document.getElementById('now-playing-card');
 const dynamicBackground = document.getElementById('dynamic-background');
 const waitingOverlay = document.getElementById('waiting-overlay');
 const playerWrapper = document.getElementById('player-wrapper');
+// ADDITION 1: Get the new overlay element
+const autoplayOverlay = document.getElementById('autoplay-overlay');
 // Viewer-specific controls
 const fullscreenBtn = document.getElementById('fullscreen-btn');
 const muteBtn = document.getElementById('mute-btn');
@@ -200,7 +202,10 @@ function handleAblyMessages(message) {
     switch (message.name) {
         case 'set-video': handleSetVideo(message.data); break;
         case 'play': handlePlay(message.data); break;
-        case 'pause': handlePause(); break;
+        case 'pause': 
+            autoplayOverlay.classList.add('hidden'); // Hide overlay if admin pauses
+            handlePause(); 
+            break;
         case 'request-join': if (IS_ADMIN_FLAG) handleJoinRequest(message.data); break;
         case 'approve-join': if (message.data.approvedClientId === CLIENT_ID) handleApproval(); break;
         case 'sync-request': if (IS_ADMIN_FLAG) handleSyncRequest(message.data); break;
@@ -314,8 +319,7 @@ function renderNowPlaying() {
 
 function playItemNow(item) {
     if (!IS_ADMIN_FLAG || !item) return;
-
-    // FIX: Immediately save the new video state to localStorage
+    
     try {
         localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: item.videoId, time: 0 }));
     } catch (e) {
@@ -391,13 +395,10 @@ function showToast(message, type = 'info', duration = 3000) {
     toast.className = `p-4 rounded-lg shadow-lg transform transition-all duration-300 ease-in-out fixed top-4 right-4 z-50 ${type === 'error' ? 'bg-red-500 text-white' : 'bg-purple-500/90 text-white backdrop-blur-sm'}`;
     toast.style.transform = 'translateX(100%)';
     toast.textContent = message;
-
     document.body.appendChild(toast);
-
     requestAnimationFrame(() => {
         toast.style.transform = 'translateX(0)';
     });
-
     setTimeout(() => {
         toast.style.transform = 'translateX(100%)';
         setTimeout(() => {
@@ -410,15 +411,12 @@ function showToast(message, type = 'info', duration = 3000) {
 async function updateParticipantList() {
     if (isUpdatingList) return;
     isUpdatingList = true;
-
     try {
         if (!userListContainer || !participantCount) return;
-
         const members = await channel.presence.get();
         participantCount.textContent = members.length;
         userListContainer.innerHTML = '';
         members.sort((a, b) => (b.data.isAdmin ? 1 : 0) - (a.data.isAdmin ? 1 : 0));
-
         members.forEach(member => {
             const displayName = member.data.nickname;
             const isAdmin = member.data.isAdmin;
@@ -492,10 +490,6 @@ function handleRoomEnded(data) { alert(data.message); ably.close(); window.locat
 function handleSetVideo(data) {
     currentVideoId = data.videoId; lastPlayerState = -1;
     lastKnownTime = 0;
-    if (IS_ADMIN_FLAG) {
-        try { localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: data.videoId, time: 0 })); }
-        catch (e) { console.warn("Could not save set-video state:", e); }
-    }
     if (player && typeof player.loadVideoById === 'function') { isEventFromAbly = true; player.loadVideoById(currentVideoId); }
     else if (isYouTubeApiReady) { createPlayer(currentVideoId); }
 }
@@ -527,12 +521,28 @@ function createPlayer(videoId, onReadyCallback) {
                     else { event.target.loadVideoById(videoId, lastKnownTime); }
                 }
             } catch (e) { console.warn("Error seeking on ready:", e); }
-            if (nowPlayingItem) { event.target.playVideo(); }
+
+            if (nowPlayingItem) {
+                event.target.playVideo();
+                // MODIFICATION 2: Check if autoplay was blocked
+                setTimeout(() => {
+                    if (player.getPlayerState() !== YT.PlayerState.PLAYING) {
+                        autoplayOverlay.classList.remove('hidden');
+                        autoplayOverlay.classList.add('flex');
+                    }
+                }, 250);
+            }
             if (onReadyCallback) onReadyCallback(event);
         }, 'onStateChange': onPlayerStateChange }
     });
 }
 function onPlayerStateChange(event) {
+    // Hide overlay once video successfully plays
+    if (event.data === YT.PlayerState.PLAYING) {
+        autoplayOverlay.classList.add('hidden');
+        autoplayOverlay.classList.remove('flex');
+    }
+
     if (isEventFromAbly) { isEventFromAbly = false; return; }
     if (isResyncing && event.data === YT.PlayerState.PLAYING) { isResyncing = false; return; }
     if (!IS_ADMIN_FLAG) { return; }
@@ -552,6 +562,17 @@ function extractVideoID(url) {
 }
 
 // --- Event Listeners ---
+// ADDITION 3: Add click listener for the new overlay
+if (autoplayOverlay) {
+    autoplayOverlay.addEventListener('click', () => {
+        if (player) {
+            player.playVideo();
+        }
+        autoplayOverlay.classList.add('hidden');
+        autoplayOverlay.classList.remove('flex');
+    });
+}
+
 if (copyRoomIdBtn) {
     copyRoomIdBtn.addEventListener('click', () => {
         navigator.clipboard.writeText(roomIdText.textContent).then(() => {

@@ -75,9 +75,18 @@
 
       <div id="player-wrapper" class="relative aspect-video w-full bg-black rounded-lg overflow-hidden flex-shrink-0">
         <div id="player" class="w-full h-full"></div>
+
+        <div id="autoplay-overlay" class="hidden absolute inset-0 bg-black bg-opacity-70 flex-col items-center justify-center cursor-pointer z-30">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke="none" class="w-20 h-20 text-white mb-4">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
+            </svg>
+            <p class="text-white text-xl font-semibold">Click to Play</p>
+        </div>
         {% if not is_admin %}
-        <div class="absolute top-2 right-2 z-20"><button id="fullscreen-btn" title="Toggle Fullscreen" class="p-2 bg-black bg-opacity-40 rounded-full hover:bg-opacity-75 transition-opacity opacity-60 hover:opacity-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-white"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m4.5 11.25h-4.5m4.5 0v-4.5m0 0L15 15" /></svg></button></div>
-        <div id="volume-controls" class="absolute bottom-2 left-2 z-20 flex items-center gap-2 p-1.5 pr-3 bg-black bg-opacity-40 rounded-full transition-opacity opacity-60 hover:opacity-100"><button id="mute-btn" title="Mute/Unmute" class="p-1"><svg id="volume-on-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-white"><path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" /></svg><svg id="volume-off-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-white hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 9.75 19.5 12m0 0 2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6.375a9 9 0 0 1 12.728 0M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" /></svg></button><input id="volume-slider" type="range" min="0" max="100" value="100" class="w-20 sm:w-24 h-1 accent-purple-500 bg-gray-600 rounded-lg appearance-none cursor-pointer"></div>
+        <div class="absolute top-2 right-2 z-20">
+            </div>
+        <div id="volume-controls" class="absolute bottom-2 left-2 z-20 flex items-center gap-2 p-1.5 pr-3 bg-black bg-opacity-40 rounded-full transition-opacity opacity-60 hover:opacity-100">
+            </div>
         {% endif %}
       </div>
 
