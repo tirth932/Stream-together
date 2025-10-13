@@ -1,4 +1,3 @@
-main.js
 // stream-together-client.js
 const ABLY_API_KEY = 'zrEY8A.ML45lQ:fRjmfTTGjqrlx5YXZD7zbkVgSBvvznl9XuOEIUL0LJA'; // <--- REPLACE THIS
 const ROOM_ID = document.location.pathname.split('/').pop();
@@ -41,15 +40,11 @@ const emojiPicker = document.getElementById('emoji-picker');
 const copyRoomIdBtn = document.getElementById('copy-room-id-btn');
 const roomIdText = document.getElementById('room-id-text');
 const copyFeedback = document.getElementById('copy-feedback');
-// --- UPDATED: Notification Elements ---
+// Notification Elements
 const toggleNotificationsBtn = document.getElementById('toggle-notifications-btn');
 const notificationsOnIcon = document.getElementById('notifications-on-icon');
 const notificationsOffIcon = document.getElementById('notifications-off-icon');
 const chatNotificationSound = document.getElementById('chat-notification-sound');
-// --- NEW: Global Notifications Elements ---
-const globalNotificationsToggle = document.getElementById('global-notifications-toggle');
-const globalNotificationsOnIcon = document.getElementById('global-notifications-on-icon');
-const globalNotificationsOffIcon = document.getElementById('global-notifications-off-icon');
 
 
 // --- State ---
@@ -66,9 +61,8 @@ let nowPlayingItem = null;
 const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)';
 let isResyncing = false;
 let lastKnownTime = 0;
-// --- UPDATED: Notification State ---
+// Notification State
 let areNotificationsMuted = false;
-let globalNotificationsEnabled = true;
 let hasInteracted = false; // For fixing audio playback
 let unreadCount = 0; // For tracking unread messages when tab is hidden
 
@@ -118,6 +112,7 @@ function getIdentity() {
 let ably, channel;
 async function main() {
     await getIdentity();
+    initNotificationControls();
     
     // Request notification permission on load
     if (Notification.permission === 'default') {
@@ -144,16 +139,12 @@ async function main() {
         const lastNowPlayingMsg = history.items.slice().reverse().find(msg => msg.name === 'now-playing-updated');
         const lastQueueMsg = history.items.slice().reverse().find(msg => msg.name === 'queue-updated');
         const timeUpdateMsgs = history.items.slice().reverse().filter(msg => msg.name === 'time-update');
-        const lastGlobalNotifMsg = history.items.slice().reverse().find(msg => msg.name === 'global-notifications-toggled');
         let lastTimeForVideo = null;
         if (timeUpdateMsgs.length > 0) {
             if (currentVideoId) {
                 lastTimeForVideo = timeUpdateMsgs.find(m => m.data && m.data.videoId === currentVideoId);
             }
             if (!lastTimeForVideo) lastTimeForVideo = timeUpdateMsgs[0];
-        }
-        if (lastGlobalNotifMsg) {
-            globalNotificationsEnabled = lastGlobalNotifMsg.data.enabled;
         }
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
         if (lastNowPlayingMsg) {
@@ -169,10 +160,9 @@ async function main() {
             if (isYouTubeApiReady) { createPlayer(currentVideoId); } 
             else { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(currentVideoId); }; }
         }
-        if (IS_ADMIN_FLAG) updateGlobalToggleUI();
     } catch (err) { console.error("Could not retrieve channel history:", err); }
 
-    const presenceData = { nickname: NICKNAME, isAdmin: IS_ADMIN_FLAG };
+    const presenceData = { nickname: NICKNAME, isAdmin: IS_ADMIN_FLAG, notificationsMuted: areNotificationsMuted };
     await channel.presence.enter(presenceData);
 
     if (IS_ADMIN_FLAG) {
@@ -234,9 +224,26 @@ function handleAblyMessages(message) {
                 }
             }
             break;
-        case 'global-notifications-toggled':
-            globalNotificationsEnabled = message.data.enabled;
-            if (IS_ADMIN_FLAG) updateGlobalToggleUI();
+        case 'toggle-user-notifications':
+            if (message.data.targetClientId === CLIENT_ID) {
+                const newMuted = !areNotificationsMuted;
+                areNotificationsMuted = newMuted;
+                localStorage.setItem('notificationsMuted', newMuted.toString());
+                channel.presence.update({ notificationsMuted: newMuted });
+                // Update UI
+                if (toggleNotificationsBtn) {
+                    if (newMuted) {
+                        notificationsOnIcon.classList.add('hidden');
+                        notificationsOffIcon.classList.remove('hidden');
+                        toggleNotificationsBtn.setAttribute('title', 'Unmute Notifications');
+                    } else {
+                        notificationsOnIcon.classList.remove('hidden');
+                        notificationsOffIcon.classList.add('hidden');
+                        toggleNotificationsBtn.setAttribute('title', 'Mute Notifications');
+                    }
+                }
+                showToast(`Notifications ${newMuted ? 'muted' : 'unmuted'} by admin`, 'info');
+            }
             break;
     }
 }
@@ -338,7 +345,7 @@ function sendChatMessage() {
     setTimeout(() => { sendChatBtn.disabled = false; }, 2000);
 }
 
-// --- UPDATED: displayChatMessage for WhatsApp-like UI and Notifications ---
+// --- displayChatMessage for WhatsApp-like UI and Notifications ---
 function displayChatMessage(data, clientId) {
     const { nickname, text, isSystem } = data;
     const isMyOwnMessage = (clientId === CLIENT_ID);
@@ -359,8 +366,8 @@ function displayChatMessage(data, clientId) {
     chatMessagesContainer.appendChild(messageEl);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 
-    // --- UPDATED: Enhanced Notification Logic ---
-    if (!isSystem && !isMyOwnMessage && !areNotificationsMuted && (IS_ADMIN_FLAG || globalNotificationsEnabled)) {
+    // Enhanced Notification Logic
+    if (!isSystem && !isMyOwnMessage && !areNotificationsMuted) {
         unreadCount++;
         // Play sound if user has interacted with the page
         if (hasInteracted) {
@@ -408,12 +415,15 @@ async function updateParticipantList() {
     members.forEach(member => {
         const displayName = member.data.nickname; 
         const isAdmin = member.data.isAdmin;
+        const notificationsMuted = member.data.notificationsMuted || false;
         const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" title="Kick User" class="kick-btn p-1 text-red-400 hover:text-red-200">🚫</button>` : '';
         const promoteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-promote-id="${member.clientId}" title="Make Admin" class="promote-btn p-1 text-yellow-400 hover:text-yellow-200">👑</button>` : '';
+        const notificationIcon = notificationsMuted ? '🔕' : '🔔';
+        const notificationButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-notif-id="${member.clientId}" title="Toggle User Notifications" class="notif-btn p-1 ${notificationsMuted ? 'text-red-400' : 'text-gray-400'} hover:text-purple-400 transition-colors">${notificationIcon}</button>` : '';
         const adminTagHTML = isAdmin ? `<span class="text-xs font-bold text-purple-400">[Admin]</span>` : '';
         const userEl = document.createElement('div');
         userEl.className = 'flex justify-between items-center bg-gray-800 p-2 rounded';
-        userEl.innerHTML = `<div class="flex items-center gap-2"><span class="text-gray-300">${displayName}</span>${adminTagHTML}</div><div class="flex items-center gap-2">${promoteButtonHTML}${kickButtonHTML}</div>`;
+        userEl.innerHTML = `<div class="flex items-center gap-2"><span class="text-gray-300">${displayName}</span>${adminTagHTML}</div><div class="flex items-center gap-2">${promoteButtonHTML}${notificationButtonHTML}${kickButtonHTML}</div>`;
         userListContainer.appendChild(userEl);
     });
 }
@@ -548,9 +558,13 @@ if (IS_ADMIN_FLAG) {
     userListContainer.addEventListener('click', (e) => {
         const kickBtn = e.target.closest('.kick-btn');
         const promoteBtn = e.target.closest('.promote-btn');
+        const notifBtn = e.target.closest('.notif-btn');
         if (kickBtn && confirm("Kick this user?")) { kickUser(kickBtn.dataset.kickId); }
         if (promoteBtn && confirm("Make this user the new admin?")) {
             channel.publish('promote-to-admin', { newAdminClientId: promoteBtn.dataset.promoteId });
+        }
+        if (notifBtn) {
+            channel.publish('toggle-user-notifications', { targetClientId: notifBtn.dataset.notifId });
         }
     });
     queueListContainer.addEventListener('click', (e) => {
@@ -572,12 +586,6 @@ if (IS_ADMIN_FLAG) {
             setTimeout(() => { ably.close(); window.location.href = '/'; }, 500);
         }
     });
-    if (globalNotificationsToggle) {
-        globalNotificationsToggle.addEventListener('click', () => {
-            const newState = !globalNotificationsEnabled;
-            channel.publish('global-notifications-toggled', { enabled: newState });
-        });
-    }
 } else {
     leaveRoomBtn.addEventListener('click', () => { ably.close(); window.location.href = '/'; });
     changeNameBtn.addEventListener('click', async () => {
@@ -631,7 +639,7 @@ function startAdminTimeBroadcast() {
     }, 5000);
 }
 
-// --- UPDATED: Notification Control Logic ---
+// --- Notification Control Logic ---
 function initNotificationControls() {
     const savedPref = localStorage.getItem('notificationsMuted');
     if (savedPref === 'true') {
@@ -643,7 +651,8 @@ function initNotificationControls() {
 
     toggleNotificationsBtn.addEventListener('click', () => {
         areNotificationsMuted = !areNotificationsMuted;
-        localStorage.setItem('notificationsMuted', areNotificationsMuted);
+        localStorage.setItem('notificationsMuted', areNotificationsMuted.toString());
+        channel.presence.update({ notificationsMuted: areNotificationsMuted });
         
         if (areNotificationsMuted) {
             notificationsOnIcon.classList.add('hidden');
@@ -661,27 +670,13 @@ function initNotificationControls() {
         hasInteracted = true;
     }, { once: true });
 
-    // --- NEW: Visibility change for toast on tab focus ---
+    // Visibility change for toast on tab focus
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && unreadCount > 0) {
             showToast(`You have ${unreadCount} new messages`, 'info', 4000);
             unreadCount = 0;
         }
     });
-}
-
-// --- NEW: Global Toggle UI Update ---
-function updateGlobalToggleUI() {
-    if (!globalNotificationsOnIcon) return;
-    if (globalNotificationsEnabled) {
-        globalNotificationsOnIcon.classList.remove('hidden');
-        globalNotificationsOffIcon.classList.add('hidden');
-        globalNotificationsToggle.setAttribute('title', 'Disable Notifications for Viewers');
-    } else {
-        globalNotificationsOnIcon.classList.add('hidden');
-        globalNotificationsOffIcon.classList.remove('hidden');
-        globalNotificationsToggle.setAttribute('title', 'Enable Notifications for Viewers');
-    }
 }
 
 // --- Emoji Picker Logic ---
@@ -712,4 +707,3 @@ function initEmojiPicker() {
 // --- Startup ---
 main();
 initEmojiPicker();
-initNotificationControls();
