@@ -312,22 +312,28 @@ function sendChatMessage() {
     setTimeout(() => { sendChatBtn.disabled = false; }, 2000);
 }
 
-// --- UPDATED: displayChatMessage for Notifications ---
+// --- UPDATED: displayChatMessage for WhatsApp-like UI and Notifications ---
 function displayChatMessage(data, clientId) {
     const { nickname, text, isSystem } = data;
+    const isMyOwnMessage = (clientId === CLIENT_ID);
     const isAdminMessage = nickname.toLowerCase() === 'admin';
     const messageEl = document.createElement('div');
+    messageEl.className = 'flex space-y-2 mb-2'; // Adjusted spacing
 
     if (isSystem) {
-        messageEl.innerHTML = `<p class="text-sm text-purple-300 italic">${text}</p>`;
+        messageEl.innerHTML = `<div class="flex justify-center"><div class="bg-purple-900/50 text-purple-300 italic px-4 py-2 rounded-full text-sm max-w-xs">${text}</div></div>`;
+    } else if (isMyOwnMessage) {
+        // Own message: right-aligned, blue bubble
+        messageEl.innerHTML = `<div class="flex justify-end"><div class="bg-blue-500 text-white px-4 py-2 rounded-lg rounded-tr-sm max-w-xs text-sm break-words">${text}</div></div>`;
     } else {
-        messageEl.innerHTML = `<p class="text-sm"><strong class="${isAdminMessage ? 'text-purple-400' : 'text-blue-300'}">${nickname}:</strong> <span class="text-gray-200">${text}</span></p>`;
+        // Other message: left-aligned, gray bubble with name
+        const nameColor = isAdminMessage ? 'text-purple-400' : 'text-blue-300';
+        messageEl.innerHTML = `<div class="flex justify-start"><div class="bg-gray-700 text-white px-4 py-2 rounded-lg rounded-tl-sm max-w-xs text-sm"><div class="font-semibold ${nameColor} text-xs mb-1">${nickname}:</div><div class="text-gray-200">${text}</div></div></div>`;
     }
     chatMessagesContainer.appendChild(messageEl);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 
     // --- UPDATED: Enhanced Notification Logic ---
-    const isMyOwnMessage = (clientId === CLIENT_ID);
     if (!isSystem && !isMyOwnMessage && !areNotificationsMuted) {
         unreadCount++;
         // Play sound if user has interacted with the page
