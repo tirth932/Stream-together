@@ -569,16 +569,28 @@ addToQueueBtn.addEventListener('click', async () => {
 if (IS_ADMIN_FLAG) {
     userListContainer.addEventListener('click', (e) => {
         const kickBtn = e.target.closest('.kick-btn');
-        const promoteBtn = e.target.closest('.promote-btn');
-        const notifBtn = e.target.closest('.notif-btn');
-        if (kickBtn && confirm("Kick this user?")) { 
-            kickUser(kickBtn.dataset.kickId); 
+        if (kickBtn && confirm("Are you sure you want to kick this user?")) {
+            kickUser(kickBtn.dataset.kickId);
+            // We refresh the list to reflect the change immediately
+            setTimeout(updateParticipantList, 500); 
         }
-        if (promoteBtn && confirm("Make this user the new admin?")) {
+
+        const promoteBtn = e.target.closest('.promote-btn');
+        if (promoteBtn && confirm("Are you sure you want to make this user the new admin?")) {
             channel.publish('promote-to-admin', { newAdminClientId: promoteBtn.dataset.promoteId });
         }
+
+        const notifBtn = e.target.closest('.notif-btn');
         if (notifBtn) {
+            // This sends the command to the user's client, telling it to toggle its mute state.
             channel.publish('toggle-user-notifications', { targetClientId: notifBtn.dataset.notifId });
+            
+            // --- RELIABILITY FIX ---
+            // We force a refresh of the participant list after a short delay.
+            // This ensures the admin's UI will always reflect the change,
+            // even if there's a slight lag in the user's presence update.
+            showToast('User notification preference updated.', 'info', 2000);
+            setTimeout(updateParticipantList, 500); 
         }
     });
     queueListContainer.addEventListener('click', (e) => {
