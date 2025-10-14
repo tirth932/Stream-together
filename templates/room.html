@@ -23,47 +23,15 @@
     #volume-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; background: #a855f7; cursor: pointer; border-radius: 50%; }
     #name-modal-overlay.visible { display: flex; }
     #name-modal-overlay.visible #name-modal-content { transform: scale(1); opacity: 1; }
-
-    /* === NEW: Styles for WhatsApp-like chat UI === */
-    .message-wrapper {
-        display: flex;
-        margin-bottom: 0.5rem;
-    }
-    .message-wrapper.sent {
-        justify-content: flex-end;
-    }
-    .message-wrapper.received {
-        justify-content: flex-start;
-    }
-    .message-card {
-        max-width: 80%;
-        padding: 0.5rem 0.75rem;
-        border-radius: 12px;
-        word-wrap: break-word;
-        line-height: 1.4;
-    }
-    .message-card.sent {
-        background-color: #581c87; /* purple-900 */
-        border-top-right-radius: 4px;
-    }
-    .message-card.received {
-        background-color: #374151; /* gray-700 */
-        border-top-left-radius: 4px;
-    }
-    .message-sender {
-        font-weight: bold;
-        font-size: 0.8rem;
-        margin-bottom: 0.2rem;
-    }
-    .message-wrapper.system {
-        justify-content: center;
-    }
-    .message-wrapper.system p {
-        background-color: rgba(31, 41, 55, 0.7);
-        padding: 4px 12px;
-        border-radius: 9999px;
-    }
-    /* === END NEW === */
+    .message-wrapper { display: flex; margin-bottom: 0.5rem; }
+    .message-wrapper.sent { justify-content: flex-end; }
+    .message-wrapper.received { justify-content: flex-start; }
+    .message-card { max-width: 80%; padding: 0.5rem 0.75rem; border-radius: 12px; word-wrap: break-word; line-height: 1.4; }
+    .message-card.sent { background-color: #581c87; border-top-right-radius: 4px; }
+    .message-card.received { background-color: #374151; border-top-left-radius: 4px; }
+    .message-sender { font-weight: bold; font-size: 0.8rem; margin-bottom: 0.2rem; }
+    .message-wrapper.system { justify-content: center; }
+    .message-wrapper.system p { background-color: rgba(31, 41, 55, 0.7); padding: 4px 12px; border-radius: 9999px; }
   </style>
 </head>
 
@@ -107,6 +75,12 @@
           <span id="copy-feedback" class="text-green-400 font-semibold text-sm opacity-0 transition-opacity duration-300">Copied!</span>
         </div>
         <p class="text-md text-gray-400 mt-1">{% if is_admin %}You are the <span class="text-purple-400 font-bold">Admin</span>.{% else %}You are a <span class="text-blue-400 font-bold">Viewer</span>.{% endif %}</p>
+        
+        {% if is_admin %}
+        <div class="absolute top-0 right-0 flex gap-2">
+            <button id="toggle-notifs-btn" title="Mute Notifications" class="action-button text-xs bg-yellow-700 hover:bg-yellow-600 font-bold p-2 rounded-lg transition-all flex items-center justify-center"></button>
+        </div>
+        {% endif %}
         {% if not is_admin %}
         <div class="absolute top-0 right-0 flex gap-2">
           <button id="toggle-notifs-btn" title="Mute Notifications" class="action-button text-xs bg-yellow-700 hover:bg-yellow-600 font-bold p-2 rounded-lg transition-all flex items-center justify-center"></button>

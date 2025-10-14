@@ -154,11 +154,9 @@ let ably, channel;
 async function main() {
     await getIdentity();
 
-    // === NEW: Request notification permissions early ===
     if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
         Notification.requestPermission();
     }
-    // === END NEW ===
     
     try {
         const saved = localStorage.getItem(`lastVideoState_${ROOM_ID}`);
@@ -179,12 +177,10 @@ async function main() {
         const history = await channel.history({ limit: 50, direction: 'backwards' });
         const lastNowPlayingMsg = history.items.find(msg => msg.name === 'now-playing-updated');
         const lastQueueMsg = history.items.find(msg => msg.name === 'queue-updated');
-        // === NEW: Get latest notification settings from history ===
         const lastNotifSettingsMsg = history.items.find(msg => msg.name === 'notification-settings-updated');
         if (lastNotifSettingsMsg) {
             mutedForNotificationsByAdmin = lastNotifSettingsMsg.data.mutedIds || [];
         }
-        // === END NEW ===
         const timeUpdateMsgs = history.items.filter(msg => msg.name === 'time-update');
         let lastTimeForVideo = null;
         if (timeUpdateMsgs.length > 0) {
@@ -232,18 +228,16 @@ function handleAblyMessages(message) {
         case 'sync-request': if (IS_ADMIN_FLAG) handleSyncRequest(message.data); break;
         case 'sync-response': if (message.data.targetClientId === CLIENT_ID) handleSync(message.data); break;
         case 'kick-user': if (message.data.kickedClientId === CLIENT_ID) handleKick(); break;
-        case 'chat-message': displayChatMessage(message.data); break; // MODIFIED
+        case 'chat-message': displayChatMessage(message.data); break;
         case 'add-to-queue': if (IS_ADMIN_FLAG) handleAddToQueue(message.data); break;
         case 'queue-updated': handleQueueUpdated(message.data); break;
         case 'now-playing-updated': handleNowPlayingUpdated(message.data); break;
         case 'room-ended': handleRoomEnded(message.data); break;
         case 'promote-to-admin': handlePromotion(message.data); break;
-        // === NEW: Handle notification setting updates ===
         case 'notification-settings-updated':
             mutedForNotificationsByAdmin = message.data.mutedIds || [];
-            if(IS_ADMIN_FLAG) updateParticipantList(); // Re-render to show mute status
+            if(IS_ADMIN_FLAG) updateParticipantList();
             break;
-        // === END NEW ===
         case 'time-update':
             if (message.data && message.data.videoId) {
                 if (!currentVideoId) currentVideoId = message.data.videoId;
@@ -351,11 +345,8 @@ function sendChatMessage() {
     sendChatBtn.disabled = true;
     setTimeout(() => { sendChatBtn.disabled = false; }, 2000);
 }
-// === MODIFIED: Complete rewrite of displayChatMessage for new UI and notifications ===
 function displayChatMessage(data) {
     const { nickname, text, isSystem = false } = data;
-
-    // --- 1. Notification Logic ---
     const shouldNotify = document.hidden && !areNotificationsMuted && !isSystem && !mutedForNotificationsByAdmin.includes(CLIENT_ID);
     if (shouldNotify) {
         playNotificationSound();
@@ -367,11 +358,8 @@ function displayChatMessage(data) {
             });
         }
     }
-
-    // --- 2. UI Logic ---
     const messageWrapper = document.createElement('div');
     const isSentByMe = (nickname === NICKNAME);
-
     if (isSystem) {
         messageWrapper.className = 'message-wrapper system';
         messageWrapper.innerHTML = `<p class="text-sm text-purple-300 italic">${text}</p>`;
@@ -379,7 +367,6 @@ function displayChatMessage(data) {
         messageWrapper.className = isSentByMe ? 'message-wrapper sent' : 'message-wrapper received';
         const messageCard = document.createElement('div');
         messageCard.className = `message-card ${isSentByMe ? 'sent' : 'received'}`;
-        
         let content = '';
         if (!isSentByMe) {
             const isAdminMessage = nickname.toLowerCase() === 'admin';
@@ -389,14 +376,11 @@ function displayChatMessage(data) {
         messageCard.innerHTML = content;
         messageWrapper.appendChild(messageCard);
     }
-    
     chatMessagesContainer.appendChild(messageWrapper);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 }
-// === END MODIFIED ===
 
 // --- Participant & Admin Logic ---
-// === MODIFIED: updateParticipantList to include admin controls for notifications ===
 async function updateParticipantList() {
     if (!userListContainer || !participantCount) return;
     const members = await channel.presence.get();
@@ -406,15 +390,12 @@ async function updateParticipantList() {
         const displayName = member.data ? member.data.nickname : member.clientId; 
         const isAdmin = member.clientId === 'admin-client';
         const isMutedForNotifs = mutedForNotificationsByAdmin.includes(member.clientId);
-
         const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" title="Kick User" class="kick-btn p-1 text-red-400 hover:text-red-200">🚫</button>` : '';
         const promoteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-promote-id="${member.clientId}" title="Make Admin" class="promote-btn p-1 text-yellow-400 hover:text-yellow-200">👑</button>` : '';
-        
         const notifMuteIcon = isMutedForNotifs
             ? `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.143 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0M3.17 5.12a9.043 9.043 0 0 1 1.413-1.412m-1.412 1.412L1.758 6.54M16.83 5.12a9.043 9.043 0 0 1 1.412 1.412m-1.412-1.412L18.242 6.54M12 21a9.043 9.043 0 0 1-9.4-9.567 9.043 9.043 0 0 1 1.412-1.412m15.176 0a9.043 9.043 0 0 1 1.412 1.412M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>`
             : `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>`;
         const notifMuteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-notif-mute-id="${member.clientId}" title="${isMutedForNotifs ? 'Unmute Notifications' : 'Mute Notifications'}" class="notif-mute-btn p-1 text-cyan-400 hover:text-cyan-200">${notifMuteIcon}</button>` : '';
-
         const adminTagHTML = isAdmin ? `<span class="text-xs font-bold text-purple-400">[Admin]</span>` : '';
         const userEl = document.createElement('div');
         userEl.className = 'flex justify-between items-center bg-gray-800 p-2 rounded';
@@ -422,7 +403,6 @@ async function updateParticipantList() {
         userListContainer.appendChild(userEl);
     });
 }
-// === END MODIFIED ===
 function handleJoinRequest(data) { channel.publish('approve-join', { approvedClientId: data.clientId, approvedNickname: data.nickname }); }
 function kickUser(clientId) { if (!IS_ADMIN_FLAG) return; channel.publish('kick-user', { kickedClientId: clientId }); }
 function handlePromotion(data) {
@@ -470,7 +450,7 @@ function requestToJoinWithRetry() {
 function handleApproval() {
     if (waitingOverlay) waitingOverlay.style.display = 'none';
     channel.publish('sync-request', { requesterClientId: CLIENT_ID });
-    displayChatMessage({ text: 'You have been admitted to the room.', isSystem: true }); // MODIFIED
+    displayChatMessage({ text: 'You have been admitted to the room.', isSystem: true });
 }
 function handleKick() { alert("You have been removed from the room by the admin."); ably.close(); window.location.href = '/'; }
 function handleRoomEnded(data) { alert(data.message); ably.close(); window.location.href = '/'; }
@@ -560,12 +540,10 @@ addToQueueBtn.addEventListener('click', async () => {
 });
 
 if (IS_ADMIN_FLAG) {
-    // === MODIFIED: Add event listener for notification mute button ===
     userListContainer.addEventListener('click', (e) => {
         const kickBtn = e.target.closest('.kick-btn');
         const promoteBtn = e.target.closest('.promote-btn');
         const notifMuteBtn = e.target.closest('.notif-mute-btn');
-
         if (kickBtn) { 
             const clientIdToKick = kickBtn.dataset.kickId; 
             if (clientIdToKick && confirm("Are you sure you want to kick this user?")) kickUser(clientIdToKick); 
@@ -585,8 +563,6 @@ if (IS_ADMIN_FLAG) {
             updateParticipantList();
         }
     });
-    // === END MODIFIED ===
-    
     queueListContainer.addEventListener('click', (e) => {
         const removeBtn = e.target.closest('.remove-queue-btn');
         if (removeBtn) {
@@ -615,17 +591,15 @@ if (IS_ADMIN_FLAG) {
             const oldName = NICKNAME;
             NICKNAME = newName.trim();
             await channel.presence.update({ nickname: NICKNAME });
-            displayChatMessage({ text: `"${oldName}" is now known as "${NICKNAME}"`, isSystem: true }); // MODIFIED
+            displayChatMessage({ text: `"${oldName}" is now known as "${NICKNAME}"`, isSystem: true });
         }
     });
-    
     if(syncRoomBtn) {
         syncRoomBtn.addEventListener('click', () => {
-            displayChatMessage({ text: 'Re-syncing with the room...', isSystem: true }); // MODIFIED
+            displayChatMessage({ text: 'Re-syncing with the room...', isSystem: true });
             channel.publish('sync-request', { requesterClientId: CLIENT_ID });
         });
     }
-
     if (fullscreenBtn && playerWrapper) { fullscreenBtn.addEventListener('click', () => { if (playerWrapper.requestFullscreen) { playerWrapper.requestFullscreen(); } else if (playerWrapper.webkitRequestFullscreen) { playerWrapper.webkitRequestFullscreen(); } }); }
     if (muteBtn && volumeSlider && volumeOnIcon && volumeOffIcon) {
         muteBtn.addEventListener('click', () => {
@@ -639,31 +613,32 @@ if (IS_ADMIN_FLAG) {
             } else if (newVolume == 0 && !player.isMuted()) { player.mute(); volumeOnIcon.classList.add('hidden'); volumeOffIcon.remove('hidden'); }
         });
     }
-
-    // === NEW: Event listener for personal notification mute button ===
-    if (toggleNotifsBtn) {
-        const bellIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>`;
-        const bellSlashIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.143 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0M3.17 5.12a9.043 9.043 0 0 1 1.413-1.412m-1.412 1.412L1.758 6.54M16.83 5.12a9.043 9.043 0 0 1 1.412 1.412m-1.412-1.412L18.242 6.54M12 21a9.043 9.043 0 0 1-9.4-9.567 9.043 9.043 0 0 1 1.412-1.412m15.176 0a9.043 9.043 0 0 1 1.412 1.412M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>`;
-
-        function updateNotifsButton() {
-            if (areNotificationsMuted) {
-                toggleNotifsBtn.title = "Unmute Notifications";
-                toggleNotifsBtn.innerHTML = bellSlashIcon;
-            } else {
-                toggleNotifsBtn.title = "Mute Notifications";
-                toggleNotifsBtn.innerHTML = bellIcon;
-            }
-        }
-        toggleNotifsBtn.addEventListener('click', () => {
-            areNotificationsMuted = !areNotificationsMuted;
-            localStorage.setItem('notificationsMuted', areNotificationsMuted);
-            updateNotifsButton();
-            displayChatMessage({ text: `Notifications ${areNotificationsMuted ? 'muted' : 'unmuted'}.`, isSystem: true });
-        });
-        updateNotifsButton(); // Set initial state on load
-    }
-    // === END NEW ===
 }
+
+// === MODIFIED: Moved this block outside the if/else to apply to ALL users ===
+if (toggleNotifsBtn) {
+    const bellIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>`;
+    const bellSlashIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.143 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0M3.17 5.12a9.043 9.043 0 0 1 1.413-1.412m-1.412 1.412L1.758 6.54M16.83 5.12a9.043 9.043 0 0 1 1.412 1.412m-1.412-1.412L18.242 6.54M12 21a9.043 9.043 0 0 1-9.4-9.567 9.043 9.043 0 0 1 1.412-1.412m15.176 0a9.043 9.043 0 0 1 1.412 1.412M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>`;
+
+    function updateNotifsButton() {
+        if (areNotificationsMuted) {
+            toggleNotifsBtn.title = "Unmute Notifications";
+            toggleNotifsBtn.innerHTML = bellSlashIcon;
+        } else {
+            toggleNotifsBtn.title = "Mute Notifications";
+            toggleNotifsBtn.innerHTML = bellIcon;
+        }
+    }
+    toggleNotifsBtn.addEventListener('click', () => {
+        areNotificationsMuted = !areNotificationsMuted;
+        localStorage.setItem('notificationsMuted', areNotificationsMuted);
+        updateNotifsButton();
+        displayChatMessage({ text: `Notifications ${areNotificationsMuted ? 'muted' : 'unmuted'}.`, isSystem: true });
+    });
+    updateNotifsButton(); // Set initial state on load
+}
+// === END MODIFIED ===
+
 sendChatBtn.addEventListener('click', sendChatMessage);
 chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendChatMessage(); });
 
