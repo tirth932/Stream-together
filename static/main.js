@@ -40,7 +40,10 @@ const emojiPicker = document.getElementById('emoji-picker');
 const copyRoomIdBtn = document.getElementById('copy-room-id-btn');
 const roomIdText = document.getElementById('room-id-text');
 const copyFeedback = document.getElementById('copy-feedback');
-
+// === NEW: Notification elements ===
+const toasterContainer = document.getElementById('toaster-container');
+const toggleNotifsBtn = document.getElementById('toggle-notifs-btn');
+// === END NEW ===
 
 // --- State ---
 let player;
@@ -55,7 +58,12 @@ let videoQueue = [];
 let nowPlayingItem = null;
 const defaultBackground = 'radial-gradient(at 20% 20%, hsla(273, 91%, 60%, 0.2) 0px, transparent 50%), radial-gradient(at 80% 20%, hsla(193, 91%, 60%, 0.2) 0px, transparent 50%)';
 let isResyncing = false;
-let lastKnownTime = 0; // <-- where we will resume from (seconds)
+let lastKnownTime = 0;
+// === NEW: Notification state ===
+let areNotificationsMuted = localStorage.getItem('notificationsMuted') === 'true';
+let mutedForNotificationsByAdmin = []; // Array of client IDs muted by admin
+let audioCtx; // For Web Audio API
+// === END NEW ===
 
 // --- Helper Functions ---
 function isNameValid(name) {
@@ -68,7 +76,6 @@ function isNameValid(name) {
         nameError.textContent = "Name must be between 2 and 20 characters.";
         return false;
     }
-    // Allow admin to use the name "Admin" if they want
     if (name.trim().toLowerCase() === 'admin' && !IS_ADMIN_FLAG) {
         nameError.textContent = "That name is reserved.";
         return false;
@@ -76,46 +83,82 @@ function isNameValid(name) {
     return true;
 }
 
-// ========== THIS IS THE CORRECTED FUNCTION ==========
 function getIdentity() {
     return new Promise((resolve) => {
-        // Always show the modal for everyone
         nameModalOverlay.classList.remove('hidden');
         nameModalOverlay.classList.add('visible');
-
         nameForm.addEventListener('submit', (e) => {
             e.preventDefault();
             const name = nameInput.value.trim();
             if (isNameValid(name)) {
                 NICKNAME = name;
-                
-                // Set the client ID based on whether the user is an admin or not
                 if (IS_ADMIN_FLAG) {
                     CLIENT_ID = 'admin-client';
                 } else {
                     CLIENT_ID = `viewer-${Math.random().toString(36).substring(2, 10)}`;
                 }
-
-                // Hide the modal with an animation
                 nameModalContent.style.transform = 'scale(0.95)';
                 nameModalContent.style.opacity = '0';
                 setTimeout(() => {
                     nameModalOverlay.classList.add('hidden');
                     nameModalOverlay.classList.remove('visible');
                 }, 300);
-
-                resolve(); // Continue with the main app logic
+                resolve();
             }
         });
     });
 }
-// ======================================================
 
+// === NEW: Notification Functions ===
+function playNotificationSound() {
+    if (areNotificationsMuted) return;
+    try {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.5);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.5);
+    } catch (e) {
+        console.warn("Could not play notification sound:", e);
+    }
+}
+
+function showToaster(title, body) {
+    if (!toasterContainer) return;
+    const toaster = document.createElement('div');
+    toaster.className = 'bg-gray-800 border border-purple-500 rounded-lg p-4 shadow-lg transition-all duration-300 transform translate-x-full';
+    toaster.innerHTML = `<strong class="text-purple-400 block">${title}</strong><p class="text-gray-200 text-sm">${body}</p>`;
+    toasterContainer.appendChild(toaster);
+    
+    setTimeout(() => { // Animate in
+        toaster.classList.remove('translate-x-full');
+    }, 10);
+    
+    setTimeout(() => { // Animate out
+        toaster.style.opacity = '0';
+        setTimeout(() => toaster.remove(), 500);
+    }, 4000);
+}
+// === END NEW ===
 
 // --- Ably Connection & Main Logic ---
 let ably, channel;
 async function main() {
     await getIdentity();
+
+    // === NEW: Request notification permissions early ===
+    if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+        Notification.requestPermission();
+    }
+    // === END NEW ===
     
     try {
         const saved = localStorage.getItem(`lastVideoState_${ROOM_ID}`);
@@ -134,19 +177,19 @@ async function main() {
     try {
         await channel.attach();
         const history = await channel.history({ limit: 50, direction: 'backwards' });
-        // Fix: Assuming history.items[0] is most recent, find the most recent matching messages
         const lastNowPlayingMsg = history.items.find(msg => msg.name === 'now-playing-updated');
         const lastQueueMsg = history.items.find(msg => msg.name === 'queue-updated');
+        // === NEW: Get latest notification settings from history ===
+        const lastNotifSettingsMsg = history.items.find(msg => msg.name === 'notification-settings-updated');
+        if (lastNotifSettingsMsg) {
+            mutedForNotificationsByAdmin = lastNotifSettingsMsg.data.mutedIds || [];
+        }
+        // === END NEW ===
         const timeUpdateMsgs = history.items.filter(msg => msg.name === 'time-update');
         let lastTimeForVideo = null;
         if (timeUpdateMsgs.length > 0) {
-            // Get most recent for current video, or most recent overall
             const relevantTimes = timeUpdateMsgs.filter(m => m.data && m.data.videoId === currentVideoId);
-            if (relevantTimes.length > 0) {
-                lastTimeForVideo = relevantTimes[0];
-            } else {
-                lastTimeForVideo = timeUpdateMsgs[0];
-            }
+            lastTimeForVideo = relevantTimes.length > 0 ? relevantTimes[0] : timeUpdateMsgs[0];
         }
 
         if (lastQueueMsg) handleQueueUpdated(lastQueueMsg.data);
@@ -156,18 +199,12 @@ async function main() {
                 lastKnownTime = lastTimeForVideo.data.currentTime || lastKnownTime;
             }
             if (nowPlayingItem) {
-                if (isYouTubeApiReady) {
-                    createPlayer(nowPlayingItem.videoId);
-                } else {
-                    window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(nowPlayingItem.videoId); };
-                }
+                if (isYouTubeApiReady) { createPlayer(nowPlayingItem.videoId); } 
+                else { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(nowPlayingItem.videoId); }; }
             }
         } else if (currentVideoId) {
-            if (isYouTubeApiReady) {
-                createPlayer(currentVideoId);
-            } else {
-                window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(currentVideoId); };
-            }
+            if (isYouTubeApiReady) { createPlayer(currentVideoId); } 
+            else { window.onYouTubeIframeAPIReady = () => { isYouTubeApiReady = true; createPlayer(currentVideoId); }; }
         }
     } catch (err) { console.error("Could not retrieve channel history:", err); }
 
@@ -195,12 +232,18 @@ function handleAblyMessages(message) {
         case 'sync-request': if (IS_ADMIN_FLAG) handleSyncRequest(message.data); break;
         case 'sync-response': if (message.data.targetClientId === CLIENT_ID) handleSync(message.data); break;
         case 'kick-user': if (message.data.kickedClientId === CLIENT_ID) handleKick(); break;
-        case 'chat-message': displayChatMessage(message.data.nickname, message.data.text, message.data.isSystem); break;
+        case 'chat-message': displayChatMessage(message.data); break; // MODIFIED
         case 'add-to-queue': if (IS_ADMIN_FLAG) handleAddToQueue(message.data); break;
         case 'queue-updated': handleQueueUpdated(message.data); break;
         case 'now-playing-updated': handleNowPlayingUpdated(message.data); break;
         case 'room-ended': handleRoomEnded(message.data); break;
         case 'promote-to-admin': handlePromotion(message.data); break;
+        // === NEW: Handle notification setting updates ===
+        case 'notification-settings-updated':
+            mutedForNotificationsByAdmin = message.data.mutedIds || [];
+            if(IS_ADMIN_FLAG) updateParticipantList(); // Re-render to show mute status
+            break;
+        // === END NEW ===
         case 'time-update':
             if (message.data && message.data.videoId) {
                 if (!currentVideoId) currentVideoId = message.data.videoId;
@@ -242,7 +285,6 @@ async function getVideoItemFromUrl() {
         return { videoId: videoId, title: details.title, thumbnail: details.thumbnail, addedBy: NICKNAME };
     } catch (error) { console.error("Error getting video details:", error); alert(error.message); return null; }
 }
-
 function handleAddToQueue(newItem) {
     if (!IS_ADMIN_FLAG) return;
     videoQueue.push(newItem);
@@ -258,18 +300,9 @@ function handleNowPlayingUpdated({ item }) {
     if (item && item.videoId) currentVideoId = item.videoId;
     renderNowPlaying();
     updateBackgroundColor(item ? item.thumbnail : null);
-
-    // ✅ Save the latest now-playing info in localStorage
-    try {
-        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({
-            videoId: currentVideoId,
-            time: 0 // start from beginning for new song
-        }));
-    } catch (e) {
-        console.warn("Could not save now playing:", e);
-    }
+    try { localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: currentVideoId, time: 0 })); } 
+    catch (e) { console.warn("Could not save now playing:", e); }
 }
-
 function renderQueue() {
     if (!queueListContainer) return;
     queueListContainer.innerHTML = '';
@@ -287,25 +320,14 @@ function renderNowPlaying() {
     if (!nowPlayingItem) { nowPlayingCard.innerHTML = `<p class="text-gray-400 text-sm italic">Nothing is currently playing.</p>`; return; }
     nowPlayingCard.innerHTML = `<div class="flex items-center gap-3 bg-green-900/30 p-2 rounded-md border border-green-500"><img src="${nowPlayingItem.thumbnail}" class="w-16 h-12 object-cover rounded"><div class="flex-1 text-sm min-w-0"><p class="font-semibold text-gray-100 truncate">${nowPlayingItem.title}</p><p class="text-green-300">Added by: ${nowPlayingItem.addedBy}</p></div></div>`;
 }
-
 function playItemNow(item) {
     if (!IS_ADMIN_FLAG || !item) return;
     channel.publish('chat-message', { nickname: 'System', text: `Now playing "${item.title}" (added by ${item.addedBy})`, isSystem: true });
     channel.publish('now-playing-updated', { item: item });
     channel.publish('set-video', { videoId: item.videoId });
-
-    // ✅ Persist in localStorage
-    try {
-        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({
-            videoId: item.videoId,
-            time: 0
-        }));
-    } catch (e) {
-        console.warn("Could not save play-now state:", e);
-    }
+    try { localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: item.videoId, time: 0 })); } 
+    catch (e) { console.warn("Could not save play-now state:", e); }
 }
-
-
 function playNextInQueue() {
     if (!IS_ADMIN_FLAG) return;
     if (videoQueue.length > 0) {
@@ -325,19 +347,56 @@ function sendChatMessage() {
     if (text.length > 280) { alert("Your message is too long (max 280 characters)."); return; }
     channel.publish('chat-message', { nickname: NICKNAME, text: text });
     chatInput.value = '';
+    emojiPicker.classList.add('hidden');
     sendChatBtn.disabled = true;
     setTimeout(() => { sendChatBtn.disabled = false; }, 2000);
 }
-function displayChatMessage(nickname, text, isSystem = false) {
-    const isAdminMessage = nickname.toLowerCase() === 'admin';
-    const messageEl = document.createElement('div');
-    if (isSystem) { messageEl.innerHTML = `<p class="text-sm text-purple-300 italic">${text}</p>`;
-    } else { messageEl.innerHTML = `<p class="text-sm"><strong class="${isAdminMessage ? 'text-purple-400' : 'text-blue-300'}">${nickname}:</strong> <span class="text-gray-200">${text}</span></p>`; }
-    chatMessagesContainer.appendChild(messageEl);
+// === MODIFIED: Complete rewrite of displayChatMessage for new UI and notifications ===
+function displayChatMessage(data) {
+    const { nickname, text, isSystem = false } = data;
+
+    // --- 1. Notification Logic ---
+    const shouldNotify = document.hidden && !areNotificationsMuted && !isSystem && !mutedForNotificationsByAdmin.includes(CLIENT_ID);
+    if (shouldNotify) {
+        playNotificationSound();
+        showToaster(nickname, text);
+        if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification(`New message from ${nickname}`, {
+                body: text,
+                icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M10 10 H90 V90 H10 Z' rx='15' fill='%23111827'/%3E%3Cpath d='M35 25 L75 50 L35 75 Z' fill='rgb(168, 85, 247)'/%3E%3C/svg%3E"
+            });
+        }
+    }
+
+    // --- 2. UI Logic ---
+    const messageWrapper = document.createElement('div');
+    const isSentByMe = (nickname === NICKNAME);
+
+    if (isSystem) {
+        messageWrapper.className = 'message-wrapper system';
+        messageWrapper.innerHTML = `<p class="text-sm text-purple-300 italic">${text}</p>`;
+    } else {
+        messageWrapper.className = isSentByMe ? 'message-wrapper sent' : 'message-wrapper received';
+        const messageCard = document.createElement('div');
+        messageCard.className = `message-card ${isSentByMe ? 'sent' : 'received'}`;
+        
+        let content = '';
+        if (!isSentByMe) {
+            const isAdminMessage = nickname.toLowerCase() === 'admin';
+            content += `<div class="message-sender ${isAdminMessage ? 'text-purple-400' : 'text-blue-300'}">${nickname}</div>`;
+        }
+        content += `<span class="text-gray-200">${text}</span>`;
+        messageCard.innerHTML = content;
+        messageWrapper.appendChild(messageCard);
+    }
+    
+    chatMessagesContainer.appendChild(messageWrapper);
     chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
 }
+// === END MODIFIED ===
 
 // --- Participant & Admin Logic ---
+// === MODIFIED: updateParticipantList to include admin controls for notifications ===
 async function updateParticipantList() {
     if (!userListContainer || !participantCount) return;
     const members = await channel.presence.get();
@@ -346,15 +405,24 @@ async function updateParticipantList() {
     members.forEach(member => {
         const displayName = member.data ? member.data.nickname : member.clientId; 
         const isAdmin = member.clientId === 'admin-client';
+        const isMutedForNotifs = mutedForNotificationsByAdmin.includes(member.clientId);
+
         const kickButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-kick-id="${member.clientId}" title="Kick User" class="kick-btn p-1 text-red-400 hover:text-red-200">🚫</button>` : '';
         const promoteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-promote-id="${member.clientId}" title="Make Admin" class="promote-btn p-1 text-yellow-400 hover:text-yellow-200">👑</button>` : '';
+        
+        const notifMuteIcon = isMutedForNotifs
+            ? `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.143 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0M3.17 5.12a9.043 9.043 0 0 1 1.413-1.412m-1.412 1.412L1.758 6.54M16.83 5.12a9.043 9.043 0 0 1 1.412 1.412m-1.412-1.412L18.242 6.54M12 21a9.043 9.043 0 0 1-9.4-9.567 9.043 9.043 0 0 1 1.412-1.412m15.176 0a9.043 9.043 0 0 1 1.412 1.412M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>`
+            : `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>`;
+        const notifMuteButtonHTML = IS_ADMIN_FLAG && !isAdmin ? `<button data-notif-mute-id="${member.clientId}" title="${isMutedForNotifs ? 'Unmute Notifications' : 'Mute Notifications'}" class="notif-mute-btn p-1 text-cyan-400 hover:text-cyan-200">${notifMuteIcon}</button>` : '';
+
         const adminTagHTML = isAdmin ? `<span class="text-xs font-bold text-purple-400">[Admin]</span>` : '';
         const userEl = document.createElement('div');
         userEl.className = 'flex justify-between items-center bg-gray-800 p-2 rounded';
-        userEl.innerHTML = `<div class="flex items-center gap-2"><span class="text-gray-300">${displayName}</span>${adminTagHTML}</div><div class="flex items-center gap-2">${promoteButtonHTML}${kickButtonHTML}</div>`;
+        userEl.innerHTML = `<div class="flex items-center gap-2"><span class="text-gray-300">${displayName}</span>${adminTagHTML}</div><div class="flex items-center gap-2">${notifMuteButtonHTML}${promoteButtonHTML}${kickButtonHTML}</div>`;
         userListContainer.appendChild(userEl);
     });
 }
+// === END MODIFIED ===
 function handleJoinRequest(data) { channel.publish('approve-join', { approvedClientId: data.clientId, approvedNickname: data.nickname }); }
 function kickUser(clientId) { if (!IS_ADMIN_FLAG) return; channel.publish('kick-user', { kickedClientId: clientId }); }
 function handlePromotion(data) {
@@ -402,7 +470,7 @@ function requestToJoinWithRetry() {
 function handleApproval() {
     if (waitingOverlay) waitingOverlay.style.display = 'none';
     channel.publish('sync-request', { requesterClientId: CLIENT_ID });
-    displayChatMessage('System', 'You have been admitted to the room.', true);
+    displayChatMessage({ text: 'You have been admitted to the room.', isSystem: true }); // MODIFIED
 }
 function handleKick() { alert("You have been removed from the room by the admin."); ably.close(); window.location.href = '/'; }
 function handleRoomEnded(data) { alert(data.message); ably.close(); window.location.href = '/'; }
@@ -412,17 +480,8 @@ function handleSetVideo(data) {
     currentVideoId = data.videoId;
     lastPlayerState = -1;
     lastKnownTime = 0;
-
-    // ✅ Save immediately
-    try {
-        localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({
-            videoId: currentVideoId,
-            time: 0
-        }));
-    } catch (e) {
-        console.warn("Could not save set-video state:", e);
-    }
-
+    try { localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: currentVideoId, time: 0 })); } 
+    catch (e) { console.warn("Could not save set-video state:", e); }
     if (player && typeof player.loadVideoById === 'function') {
         isEventFromAbly = true;
         player.loadVideoById(currentVideoId);
@@ -430,7 +489,6 @@ function handleSetVideo(data) {
         createPlayer(currentVideoId);
     }
 }
-
 function handlePlay(data) { if (!player) return; isEventFromAbly = true; player.seekTo(data.currentTime, true); player.playVideo(); }
 function handlePause() { if (!player) return; isEventFromAbly = true; player.pauseVideo(); }
 
@@ -448,35 +506,21 @@ function createPlayer(videoId, onReadyCallback) {
             } else {
                 player.seekTo(lastKnownTime || 0, true);
             }
-        } catch (e) {
-            console.warn("Error reusing player, creating a new one:", e);
-        }
+        } catch (e) { console.warn("Error reusing player, creating a new one:", e); }
         if (onReadyCallback) onReadyCallback();
         return;
     }
-
     player = new YT.Player('player', {
         height: '100%', width: '100%', videoId: videoId,
-        playerVars: { 
-            playsinline: 1, 
-            autoplay: 0, 
-            controls: IS_ADMIN_FLAG ? 1 : 0, 
-            origin: window.location.origin,
-            enablejsapi: 1
-        },
+        playerVars: { playsinline: 1, autoplay: 0, controls: IS_ADMIN_FLAG ? 1 : 0, origin: window.location.origin, enablejsapi: 1 },
         events: { 'onReady': (event) => {
             try {
                 if (lastKnownTime && lastKnownTime > 0) {
-                    if (event.target.getVideoData().video_id === videoId) {
-                        event.target.seekTo(lastKnownTime, true);
-                    } else {
-                        event.target.loadVideoById(videoId, lastKnownTime);
-                    }
+                    if (event.target.getVideoData().video_id === videoId) { event.target.seekTo(lastKnownTime, true); } 
+                    else { event.target.loadVideoById(videoId, lastKnownTime); }
                 }
             } catch (e) { console.warn("Error seeking on ready:", e); }
-            if (IS_ADMIN_FLAG && nowPlayingItem) {
-                event.target.playVideo();
-            }
+            if (IS_ADMIN_FLAG && nowPlayingItem) { event.target.playVideo(); }
             if (onReadyCallback) onReadyCallback(event);
         }, 'onStateChange': onPlayerStateChange }
     });
@@ -488,18 +532,11 @@ function onPlayerStateChange(event) {
     if (event.data === lastPlayerState) return;
     lastPlayerState = event.data;
     switch (event.data) {
-        case YT.PlayerState.PLAYING:
-            channel.publish('play', { currentTime: player.getCurrentTime() });
-            break;
-        case YT.PlayerState.PAUSED:
-            channel.publish('pause', {});
-            break;
-        case YT.PlayerState.ENDED:
-            playNextInQueue();
-            break;
+        case YT.PlayerState.PLAYING: channel.publish('play', { currentTime: player.getCurrentTime() }); break;
+        case YT.PlayerState.PAUSED: channel.publish('pause', {}); break;
+        case YT.PlayerState.ENDED: playNextInQueue(); break;
     }
 }
-
 function extractVideoID(url) {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|\&v=)([^#\&\?]*).*/;
     const match = url.match(regExp);
@@ -509,19 +546,12 @@ function extractVideoID(url) {
 // --- Event Listeners ---
 if (copyRoomIdBtn && roomIdText && copyFeedback) {
     copyRoomIdBtn.addEventListener('click', () => {
-        const roomId = roomIdText.textContent;
-        navigator.clipboard.writeText(roomId).then(() => {
+        navigator.clipboard.writeText(roomIdText.textContent).then(() => {
             copyFeedback.style.opacity = '1';
-            setTimeout(() => {
-                copyFeedback.style.opacity = '0';
-            }, 2000);
-        }).catch(err => {
-            console.error('Failed to copy room ID: ', err);
-            alert('Could not copy Room ID.');
-        });
+            setTimeout(() => { copyFeedback.style.opacity = '0'; }, 2000);
+        }).catch(err => { console.error('Failed to copy room ID: ', err); alert('Could not copy Room ID.'); });
     });
 }
-
 addToQueueBtn.addEventListener('click', async () => {
     addToQueueBtn.disabled = true;
     const newItem = await getVideoItemFromUrl();
@@ -530,9 +560,12 @@ addToQueueBtn.addEventListener('click', async () => {
 });
 
 if (IS_ADMIN_FLAG) {
+    // === MODIFIED: Add event listener for notification mute button ===
     userListContainer.addEventListener('click', (e) => {
         const kickBtn = e.target.closest('.kick-btn');
         const promoteBtn = e.target.closest('.promote-btn');
+        const notifMuteBtn = e.target.closest('.notif-mute-btn');
+
         if (kickBtn) { 
             const clientIdToKick = kickBtn.dataset.kickId; 
             if (clientIdToKick && confirm("Are you sure you want to kick this user?")) kickUser(clientIdToKick); 
@@ -543,7 +576,16 @@ if (IS_ADMIN_FLAG) {
                 channel.publish('promote-to-admin', { newAdminClientId: clientIdToPromote });
             }
         }
+        if (notifMuteBtn) {
+            const clientIdToMute = notifMuteBtn.dataset.notifMuteId;
+            const index = mutedForNotificationsByAdmin.indexOf(clientIdToMute);
+            if (index > -1) { mutedForNotificationsByAdmin.splice(index, 1); } 
+            else { mutedForNotificationsByAdmin.push(clientIdToMute); }
+            channel.publish('notification-settings-updated', { mutedIds: mutedForNotificationsByAdmin });
+            updateParticipantList();
+        }
     });
+    // === END MODIFIED ===
     
     queueListContainer.addEventListener('click', (e) => {
         const removeBtn = e.target.closest('.remove-queue-btn');
@@ -553,14 +595,12 @@ if (IS_ADMIN_FLAG) {
             channel.publish('queue-updated', { queue: videoQueue });
         }
     });
-
     playImmediatelyBtn.addEventListener('click', async () => {
         playImmediatelyBtn.disabled = true;
         const newItem = await getVideoItemFromUrl();
         if (newItem) { playItemNow(newItem); }
         playImmediatelyBtn.disabled = false;
     });
-
     endRoomBtn.addEventListener('click', () => {
         if (confirm("Are you sure you want to end the session for everyone?")) {
             channel.publish('room-ended', { message: 'The admin has ended the session.' });
@@ -575,13 +615,13 @@ if (IS_ADMIN_FLAG) {
             const oldName = NICKNAME;
             NICKNAME = newName.trim();
             await channel.presence.update({ nickname: NICKNAME });
-            displayChatMessage('System', `"${oldName}" is now known as "${NICKNAME}"`, true);
+            displayChatMessage({ text: `"${oldName}" is now known as "${NICKNAME}"`, isSystem: true }); // MODIFIED
         }
     });
     
     if(syncRoomBtn) {
         syncRoomBtn.addEventListener('click', () => {
-            displayChatMessage('System', 'Re-syncing with the room...', true);
+            displayChatMessage({ text: 'Re-syncing with the room...', isSystem: true }); // MODIFIED
             channel.publish('sync-request', { requesterClientId: CLIENT_ID });
         });
     }
@@ -599,6 +639,30 @@ if (IS_ADMIN_FLAG) {
             } else if (newVolume == 0 && !player.isMuted()) { player.mute(); volumeOnIcon.classList.add('hidden'); volumeOffIcon.remove('hidden'); }
         });
     }
+
+    // === NEW: Event listener for personal notification mute button ===
+    if (toggleNotifsBtn) {
+        const bellIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>`;
+        const bellSlashIcon = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.143 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0M3.17 5.12a9.043 9.043 0 0 1 1.413-1.412m-1.412 1.412L1.758 6.54M16.83 5.12a9.043 9.043 0 0 1 1.412 1.412m-1.412-1.412L18.242 6.54M12 21a9.043 9.043 0 0 1-9.4-9.567 9.043 9.043 0 0 1 1.412-1.412m15.176 0a9.043 9.043 0 0 1 1.412 1.412M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>`;
+
+        function updateNotifsButton() {
+            if (areNotificationsMuted) {
+                toggleNotifsBtn.title = "Unmute Notifications";
+                toggleNotifsBtn.innerHTML = bellSlashIcon;
+            } else {
+                toggleNotifsBtn.title = "Mute Notifications";
+                toggleNotifsBtn.innerHTML = bellIcon;
+            }
+        }
+        toggleNotifsBtn.addEventListener('click', () => {
+            areNotificationsMuted = !areNotificationsMuted;
+            localStorage.setItem('notificationsMuted', areNotificationsMuted);
+            updateNotifsButton();
+            displayChatMessage({ text: `Notifications ${areNotificationsMuted ? 'muted' : 'unmuted'}.`, isSystem: true });
+        });
+        updateNotifsButton(); // Set initial state on load
+    }
+    // === END NEW ===
 }
 sendChatBtn.addEventListener('click', sendChatMessage);
 chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendChatMessage(); });
@@ -615,9 +679,8 @@ function startAdminTimeBroadcast() {
                 const t = player.getCurrentTime();
                 currentVideoId = player.getVideoData().video_id || currentVideoId;
                 channel.publish('time-update', { videoId: currentVideoId, currentTime: t });
-                try {
-                    localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: currentVideoId, time: t }));
-                } catch (e) { /* ignore localStorage failures */ }
+                try { localStorage.setItem(`lastVideoState_${ROOM_ID}`, JSON.stringify({ videoId: currentVideoId, time: t })); } 
+                catch (e) { /* ignore localStorage failures */ }
             }
         } catch (e) { }
     }, 5000);
@@ -632,7 +695,6 @@ function stopAdminTimeBroadcast() {
 // --- Emoji Picker Logic ---
 function initEmojiPicker() {
     const emojis = ['😀', '😂', '😍', '🤔', '😎', '😢', '🔥', '❤️', '👍', '👎', '🎉', '🚀', '💯', '👏', '👀', '🍿'];
-    
     emojis.forEach(emoji => {
         const button = document.createElement('button');
         button.className = 'p-1 text-2xl rounded-md hover:bg-gray-700 transition-colors';
@@ -644,12 +706,10 @@ function initEmojiPicker() {
         });
         emojiPicker.appendChild(button);
     });
-
     emojiBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         emojiPicker.classList.toggle('hidden');
     });
-
     document.addEventListener('click', (e) => {
         if (!emojiPicker.contains(e.target) && !emojiBtn.contains(e.target)) {
             emojiPicker.classList.add('hidden');
