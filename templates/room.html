@@ -34,6 +34,7 @@
     }
 
     .action-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(168, 85, 247, 0.4); }
+    .danger-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(220, 38, 38, 0.5); }
 
     #chat-messages::-webkit-scrollbar,
     #user-list::-webkit-scrollbar,
@@ -79,11 +80,10 @@
       border-radius: 9999px;
     }
 
-    /* ✅ FIX: make live chat scrollable */
     #chat-messages {
       flex: 1;
       overflow-y: auto;
-      max-height: 350px; /* adjust height if needed */
+      max-height: 350px;
       padding-right: 6px;
       scroll-behavior: smooth;
     }
@@ -130,6 +130,13 @@
           <span id="copy-feedback" class="text-green-400 font-semibold text-sm opacity-0 transition-opacity duration-300">Copied!</span>
         </div>
         <p class="text-md text-gray-400 mt-1">{% if is_admin %}You are the <span class="text-purple-400 font-bold">Admin</span>.{% else %}You are a <span class="text-blue-400 font-bold">Viewer</span>.{% endif %}</p>
+        {% if is_admin %}
+        <button id="end-room-btn" title="End Room For Everyone" class="danger-button absolute top-0 right-0 p-2 rounded-lg bg-red-800 hover:bg-red-700 transition-colors">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+          </svg>
+        </button>
+        {% endif %}
       </header>
 
       <div id="player-wrapper" class="relative aspect-video w-full bg-black rounded-lg overflow-hidden flex-shrink-0">
@@ -140,7 +147,12 @@
         <div class="relative flex-grow w-full min-w-0">
           <input type="text" id="youtube-url" class="input-field w-full bg-gray-800/70 border-2 border-gray-600 focus:border-purple-500 rounded-lg py-3 pr-3 pl-4 outline-none" placeholder="Paste a YouTube URL...">
         </div>
-        <button id="add-to-queue-btn" class="action-button flex-shrink-0 bg-green-600 hover:bg-green-700 font-bold py-3 px-6 rounded-lg transition-all">Add to Queue</button>
+        <div class="flex gap-2 flex-shrink-0">
+            <button id="add-to-queue-btn" class="action-button bg-green-600 hover:bg-green-700 font-bold py-3 px-6 rounded-lg transition-all">Add to Queue</button>
+            {% if is_admin %}
+            <button id="play-now-btn" class="action-button bg-purple-600 hover:bg-purple-700 font-bold py-3 px-6 rounded-lg transition-all">Play Now</button>
+            {% endif %}
+        </div>
       </div>
     </div>
 
@@ -163,7 +175,6 @@
       <div class="flex flex-col flex-1 min-h-0">
         <h3 class="text-xl font-bold text-purple-400 border-b-2 border-gray-700 pb-2 mb-3">Live Chat</h3>
 
-        <!-- ✅ Scrollable Live Chat -->
         <div id="chat-messages" class="flex-1 pr-2 mb-4"></div>
 
         <div class="flex gap-2 mt-auto flex-shrink-0">
